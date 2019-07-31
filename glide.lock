@@ -1,5 +1,5 @@
 hash: 28528b597c719cef00c25ae3ffcd8d1e3b51a6a91bafa0e1453ecff6151de036
-updated: 2019-07-30T08:42:49.496985972-04:00
+updated: 2019-07-30T16:54:54.00963765-04:00
 imports:
 - name: github.com/beorn7/perks
   version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
@@ -165,7 +165,7 @@ imports:
 - name: github.com/opencontainers/go-digest
   version: a6d0ee40d4207ea02364bd3b9e8e77b9159ba1eb
 - name: github.com/openshift/api
-  version: a33d022e090746dfe27a1dc417c6b84cc640800f
+  version: 0922aa5a655be314e20a3e0e94f4f2b105100154
   subpackages:
   - config/v1
   - image
@@ -723,7 +723,7 @@ imports:
   subpackages:
   - logs
 - name: k8s.io/klog
-  version: 8e90cee79f823779174776412c13478955131846
+  version: 8139d8cb77af419532b33dfa7dd09fbc5f1d344f
 - name: k8s.io/kube-openapi
   version: b3a7cee44a305be0a69e1b9ac03018307287e1b0
   subpackages:
