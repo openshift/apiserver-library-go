@@ -1396,7 +1396,14 @@ func (kl *Kubelet) initializeRuntimeDependentModules() {
 // Run starts the kubelet reacting to config updates
 func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 	if kl.logServer == nil {
-		kl.logServer = http.StripPrefix("/logs/", http.FileServer(http.Dir("/var/log/")))
+		file := http.FileServer(http.Dir("/var/log/"))
+		kl.logServer = http.StripPrefix("/logs/", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "journal" {
+				journal.ServeHTTP(w, req)
+				return
+			}
+			file.ServeHTTP(w, req)
+		}))
 	}
 	if kl.kubeClient == nil {
 		klog.Warning("No api server defined - no node status update will be sent.")
@@ -1994,9 +2001,10 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 }
 
 // dispatchWork starts the asynchronous sync of the pod in a pod worker.
-// If the pod is terminated, dispatchWork
+// If the pod is terminated, dispatchWork will perform no action.
 func (kl *Kubelet) dispatchWork(pod *v1.Pod, syncType kubetypes.SyncPodType, mirrorPod *v1.Pod, start time.Time) {
 	if kl.podIsTerminated(pod) {
+		klog.V(4).Infof("Pod %q is terminated, ignoring remaining sync work: %s", format.Pod(pod), syncType)
 		if pod.DeletionTimestamp != nil {
 			// If the pod is in a terminated state, there is no pod worker to
 			// handle the work item. Check if the DeletionTimestamp has been
@@ -2189,15 +2197,16 @@ func (kl *Kubelet) updateRuntimeUp() {
 		// Set nil if the container runtime network is ready.
 		kl.runtimeState.setNetworkState(nil)
 	}
-	// TODO(random-liu): Add runtime error in runtimeState, and update it
-	// when runtime is not ready, so that the information in RuntimeReady
-	// condition will be propagated to NodeReady condition.
+	// information in RuntimeReady condition will be propagated to NodeReady condition.
 	runtimeReady := s.GetRuntimeCondition(kubecontainer.RuntimeReady)
 	// If RuntimeReady is not set or is false, report an error.
 	if runtimeReady == nil || !runtimeReady.Status {
-		klog.Errorf("Container runtime not ready: %v", runtimeReady)
+		err := fmt.Errorf("Container runtime not ready: %v", runtimeReady)
+		klog.Error(err)
+		kl.runtimeState.setRuntimeState(err)
 		return
 	}
+	kl.runtimeState.setRuntimeState(nil)
 	kl.oneTimeInitializer.Do(kl.initializeRuntimeDependentModules)
 	kl.runtimeState.setRuntimeSync(kl.clock.Now())
 }

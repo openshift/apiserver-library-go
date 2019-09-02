@@ -295,9 +295,6 @@ func (h *holder) record(version string, phase string, converted bool, request *a
 	}
 
 	name := request.Name
-	if name == "" && request.Object.Object != nil {
-		name = request.Object.Object.(*unstructured.Unstructured).GetName()
-	}
 	if name != h.recordName {
 		if debug {
 			h.t.Log(name, "!=", h.recordName)
@@ -1393,6 +1390,9 @@ func getStubObj(gvr schema.GroupVersionResource, resource metav1.APIResource) (*
 
 func createOrGetResource(client dynamic.Interface, gvr schema.GroupVersionResource, resource metav1.APIResource) (*unstructured.Unstructured, error) {
 	stubObj, err := getStubObj(gvr, resource)
+	if gvr.Group == "discovery.k8s.io" {
+		fmt.Printf("stubObj =====> %v\n", stubObj)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
-	"k8s.io/kubernetes/pkg/scheduler/internal/cache"
+	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
 )
 
@@ -35,19 +35,19 @@ import (
 // plugins.
 type framework struct {
 	registry                  Registry
-	nodeInfoSnapshot          *cache.NodeInfoSnapshot
+	nodeInfoSnapshot          *schedulernodeinfo.Snapshot
 	waitingPods               *waitingPodsMap
 	pluginNameToWeightMap     map[string]int
 	queueSortPlugins          []QueueSortPlugin
-	prefilterPlugins          []PrefilterPlugin
+	preFilterPlugins          []PreFilterPlugin
 	filterPlugins             []FilterPlugin
 	postFilterPlugins         []PostFilterPlugin
 	scorePlugins              []ScorePlugin
 	scoreWithNormalizePlugins []ScoreWithNormalizePlugin
 	reservePlugins            []ReservePlugin
-	prebindPlugins            []PrebindPlugin
+	preBindPlugins            []PreBindPlugin
 	bindPlugins               []BindPlugin
-	postbindPlugins           []PostbindPlugin
+	postBindPlugins           []PostBindPlugin
 	unreservePlugins          []UnreservePlugin
 	permitPlugins             []PermitPlugin
 }
@@ -63,7 +63,7 @@ var _ = Framework(&framework{})
 func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfig) (Framework, error) {
 	f := &framework{
 		registry:              r,
-		nodeInfoSnapshot:      cache.NewNodeInfoSnapshot(),
+		nodeInfoSnapshot:      schedulernodeinfo.NewSnapshot(),
 		pluginNameToWeightMap: make(map[string]int),
 		waitingPods:           newWaitingPodsMap(),
 	}
@@ -105,11 +105,11 @@ func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfi
 	if plugins.PreFilter != nil {
 		for _, pf := range plugins.PreFilter.Enabled {
 			if pg, ok := pluginsMap[pf.Name]; ok {
-				p, ok := pg.(PrefilterPlugin)
+				p, ok := pg.(PreFilterPlugin)
 				if !ok {
 					return nil, fmt.Errorf("plugin %q does not extend prefilter plugin", pf.Name)
 				}
-				f.prefilterPlugins = append(f.prefilterPlugins, p)
+				f.preFilterPlugins = append(f.preFilterPlugins, p)
 			} else {
 				return nil, fmt.Errorf("prefilter plugin %q does not exist", pf.Name)
 			}
@@ -186,11 +186,11 @@ func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfi
 	if plugins.PreBind != nil {
 		for _, pb := range plugins.PreBind.Enabled {
 			if pg, ok := pluginsMap[pb.Name]; ok {
-				p, ok := pg.(PrebindPlugin)
+				p, ok := pg.(PreBindPlugin)
 				if !ok {
 					return nil, fmt.Errorf("plugin %q does not extend prebind plugin", pb.Name)
 				}
-				f.prebindPlugins = append(f.prebindPlugins, p)
+				f.preBindPlugins = append(f.preBindPlugins, p)
 			} else {
 				return nil, fmt.Errorf("prebind plugin %q does not exist", pb.Name)
 			}
@@ -214,11 +214,11 @@ func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfi
 	if plugins.PostBind != nil {
 		for _, pb := range plugins.PostBind.Enabled {
 			if pg, ok := pluginsMap[pb.Name]; ok {
-				p, ok := pg.(PostbindPlugin)
+				p, ok := pg.(PostBindPlugin)
 				if !ok {
 					return nil, fmt.Errorf("plugin %q does not extend postbind plugin", pb.Name)
 				}
-				f.postbindPlugins = append(f.postbindPlugins, p)
+				f.postBindPlugins = append(f.postBindPlugins, p)
 			} else {
 				return nil, fmt.Errorf("postbind plugin %q does not exist", pb.Name)
 			}
@@ -283,14 +283,14 @@ func (f *framework) QueueSortFunc() LessFunc {
 	return f.queueSortPlugins[0].Less
 }
 
-// RunPrefilterPlugins runs the set of configured prefilter plugins. It returns
+// RunPreFilterPlugins runs the set of configured PreFilter plugins. It returns
 // *Status and its code is set to non-success if any of the plugins returns
 // anything but Success. If a non-success status is returned, then the scheduling
 // cycle is aborted.
-func (f *framework) RunPrefilterPlugins(
+func (f *framework) RunPreFilterPlugins(
 	pc *PluginContext, pod *v1.Pod) *Status {
-	for _, pl := range f.prefilterPlugins {
-		status := pl.Prefilter(pc, pod)
+	for _, pl := range f.preFilterPlugins {
+		status := pl.PreFilter(pc, pod)
 		if !status.IsSuccess() {
 			if status.Code() == Unschedulable {
 				msg := fmt.Sprintf("rejected by %q at prefilter: %v", pl.Name(), status.Message())
@@ -360,6 +360,8 @@ func (f *framework) RunScorePlugins(pc *PluginContext, pod *v1.Pod, nodes []*v1.
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := schedutil.NewErrorChannel()
+
+	// Run Score method for each node in parallel.
 	workqueue.ParallelizeUntil(ctx, 16, len(nodes), func(index int) {
 		for _, pl := range f.scorePlugins {
 			nodeName := nodes[index].Name
@@ -374,31 +376,16 @@ func (f *framework) RunScorePlugins(pc *PluginContext, pod *v1.Pod, nodes []*v1.
 			}
 		}
 	})
-
 	if err := errCh.ReceiveError(); err != nil {
 		msg := fmt.Sprintf("error while running score plugin for pod %q: %v", pod.Name, err)
 		klog.Error(msg)
 		return nil, NewStatus(Error, msg)
 	}
 
-	return pluginToNodeScores, nil
-}
-
-// RunNormalizeScorePlugins runs the NormalizeScore function of Score plugins.
-// It should be called after RunScorePlugins with the PluginToNodeScores result.
-// It then modifies the list with normalized scores. It returns a non-success Status
-// if any of the NormalizeScore functions returns a non-success status.
-func (f *framework) RunNormalizeScorePlugins(pc *PluginContext, pod *v1.Pod, scores PluginToNodeScores) *Status {
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := schedutil.NewErrorChannel()
+	// Run NormalizeScore method for each ScoreWithNormalizePlugin in parallel.
 	workqueue.ParallelizeUntil(ctx, 16, len(f.scoreWithNormalizePlugins), func(index int) {
 		pl := f.scoreWithNormalizePlugins[index]
-		nodeScoreList, ok := scores[pl.Name()]
-		if !ok {
-			err := fmt.Errorf("normalize score plugin %q has no corresponding scores in the PluginToNodeScores", pl.Name())
-			errCh.SendErrorWithCancel(err, cancel)
-			return
-		}
+		nodeScoreList := pluginToNodeScores[pl.Name()]
 		status := pl.NormalizeScore(pc, pod, nodeScoreList)
 		if !status.IsSuccess() {
 			err := fmt.Errorf("normalize score plugin %q failed with error %v", pl.Name(), status.Message())
@@ -406,60 +393,45 @@ func (f *framework) RunNormalizeScorePlugins(pc *PluginContext, pod *v1.Pod, sco
 			return
 		}
 	})
-
 	if err := errCh.ReceiveError(); err != nil {
 		msg := fmt.Sprintf("error while running normalize score plugin for pod %q: %v", pod.Name, err)
 		klog.Error(msg)
-		return NewStatus(Error, msg)
+		return nil, NewStatus(Error, msg)
 	}
 
-	return nil
-}
-
-// ApplyScoreWeights applies weights to the score results. It should be called after
-// RunNormalizeScorePlugins.
-func (f *framework) ApplyScoreWeights(pc *PluginContext, pod *v1.Pod, scores PluginToNodeScores) *Status {
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := schedutil.NewErrorChannel()
+	// Apply score defaultWeights for each ScorePlugin in parallel.
 	workqueue.ParallelizeUntil(ctx, 16, len(f.scorePlugins), func(index int) {
 		pl := f.scorePlugins[index]
 		// Score plugins' weight has been checked when they are initialized.
 		weight := f.pluginNameToWeightMap[pl.Name()]
-		nodeScoreList, ok := scores[pl.Name()]
-		if !ok {
-			err := fmt.Errorf("score plugin %q has no corresponding scores in the PluginToNodeScores", pl.Name())
-			errCh.SendErrorWithCancel(err, cancel)
-			return
-		}
+		nodeScoreList := pluginToNodeScores[pl.Name()]
 
 		for i, nodeScore := range nodeScoreList {
 			// return error if score plugin returns invalid score.
 			if nodeScore.Score > MaxNodeScore || nodeScore.Score < MinNodeScore {
-				err := fmt.Errorf("score plugin %q returns an invalid score %q, it should in the range of [MinNodeScore, MaxNodeScore] after normalizing", pl.Name(), nodeScore.Score)
+				err := fmt.Errorf("score plugin %q returns an invalid score %v, it should in the range of [%v, %v] after normalizing", pl.Name(), nodeScore.Score, MinNodeScore, MaxNodeScore)
 				errCh.SendErrorWithCancel(err, cancel)
 				return
 			}
-
 			nodeScoreList[i].Score = nodeScore.Score * weight
 		}
 	})
-
 	if err := errCh.ReceiveError(); err != nil {
-		msg := fmt.Sprintf("error while applying score weights for pod %q: %v", pod.Name, err)
+		msg := fmt.Sprintf("error while applying score defaultWeights for pod %q: %v", pod.Name, err)
 		klog.Error(msg)
-		return NewStatus(Error, msg)
+		return nil, NewStatus(Error, msg)
 	}
 
-	return nil
+	return pluginToNodeScores, nil
 }
 
-// RunPrebindPlugins runs the set of configured prebind plugins. It returns a
+// RunPreBindPlugins runs the set of configured prebind plugins. It returns a
 // failure (bool) if any of the plugins returns an error. It also returns an
 // error containing the rejection message or the error occurred in the plugin.
-func (f *framework) RunPrebindPlugins(
+func (f *framework) RunPreBindPlugins(
 	pc *PluginContext, pod *v1.Pod, nodeName string) *Status {
-	for _, pl := range f.prebindPlugins {
-		status := pl.Prebind(pc, pod, nodeName)
+	for _, pl := range f.preBindPlugins {
+		status := pl.PreBind(pc, pod, nodeName)
 		if !status.IsSuccess() {
 			if status.Code() == Unschedulable {
 				msg := fmt.Sprintf("rejected by %q at prebind: %v", pl.Name(), status.Message())
@@ -495,11 +467,11 @@ func (f *framework) RunBindPlugins(pc *PluginContext, pod *v1.Pod, nodeName stri
 	return status
 }
 
-// RunPostbindPlugins runs the set of configured postbind plugins.
-func (f *framework) RunPostbindPlugins(
+// RunPostBindPlugins runs the set of configured postbind plugins.
+func (f *framework) RunPostBindPlugins(
 	pc *PluginContext, pod *v1.Pod, nodeName string) {
-	for _, pl := range f.postbindPlugins {
-		pl.Postbind(pc, pod, nodeName)
+	for _, pl := range f.postBindPlugins {
+		pl.PostBind(pc, pod, nodeName)
 	}
 }
 
@@ -594,7 +566,7 @@ func (f *framework) RunPermitPlugins(
 // is taken at the beginning of a scheduling cycle and remains unchanged until a
 // pod finishes "Reserve". There is no guarantee that the information remains
 // unchanged after "Reserve".
-func (f *framework) NodeInfoSnapshot() *cache.NodeInfoSnapshot {
+func (f *framework) NodeInfoSnapshot() *schedulernodeinfo.Snapshot {
 	return f.nodeInfoSnapshot
 }
 

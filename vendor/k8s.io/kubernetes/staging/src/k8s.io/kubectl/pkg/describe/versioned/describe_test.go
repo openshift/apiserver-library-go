@@ -95,6 +95,51 @@ func TestDescribePod(t *testing.T) {
 	}
 }
 
+func TestDescribePodEphemeralContainers(t *testing.T) {
+	fake := fake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "bar",
+			Namespace: "foo",
+		},
+		Spec: corev1.PodSpec{
+			EphemeralContainers: []corev1.EphemeralContainer{
+				{
+					EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+						Name:  "debugger",
+						Image: "busybox",
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			EphemeralContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "debugger",
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{
+							StartedAt: metav1.NewTime(time.Now()),
+						},
+					},
+					Ready:        false,
+					RestartCount: 0,
+				},
+			},
+		},
+	})
+	c := &describeClient{T: t, Namespace: "foo", Interface: fake}
+	d := PodDescriber{c}
+	out, err := d.Describe("foo", "bar", describe.DescriberSettings{ShowEvents: true})
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "debugger:") {
+		t.Errorf("unexpected out: %s", out)
+	}
+	if !strings.Contains(out, "busybox") {
+		t.Errorf("unexpected out: %s", out)
+	}
+}
+
 func TestDescribePodNode(t *testing.T) {
 	fake := fake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -306,6 +351,8 @@ func getResourceList(cpu, memory string) corev1.ResourceList {
 }
 
 func TestDescribeService(t *testing.T) {
+	defaultServiceIPFamily := corev1.IPv4Protocol
+
 	testCases := []struct {
 		name    string
 		service *corev1.Service
@@ -319,7 +366,8 @@ func TestDescribeService(t *testing.T) {
 					Namespace: "foo",
 				},
 				Spec: corev1.ServiceSpec{
-					Type: corev1.ServiceTypeLoadBalancer,
+					Type:     corev1.ServiceTypeLoadBalancer,
+					IPFamily: &defaultServiceIPFamily,
 					Ports: []corev1.ServicePort{{
 						Name:       "port-tcp",
 						Port:       8080,
@@ -357,7 +405,8 @@ func TestDescribeService(t *testing.T) {
 					Namespace: "foo",
 				},
 				Spec: corev1.ServiceSpec{
-					Type: corev1.ServiceTypeLoadBalancer,
+					Type:     corev1.ServiceTypeLoadBalancer,
+					IPFamily: &defaultServiceIPFamily,
 					Ports: []corev1.ServicePort{{
 						Name:       "port-tcp",
 						Port:       8080,
@@ -379,6 +428,46 @@ func TestDescribeService(t *testing.T) {
 				"Selector", "blah=heh",
 				"Type", "LoadBalancer",
 				"IP", "1.2.3.4",
+				"Port", "port-tcp", "8080/TCP",
+				"TargetPort", "targetPort/TCP",
+				"NodePort", "port-tcp", "31111/TCP",
+				"Session Affinity", "None",
+				"External Traffic Policy", "Local",
+				"HealthCheck NodePort", "32222",
+			},
+		},
+		{
+			name: "test-ServiceIPFamily",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "bar",
+					Namespace: "foo",
+				},
+				Spec: corev1.ServiceSpec{
+					Type:     corev1.ServiceTypeLoadBalancer,
+					IPFamily: &defaultServiceIPFamily,
+					Ports: []corev1.ServicePort{{
+						Name:       "port-tcp",
+						Port:       8080,
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("targetPort"),
+						NodePort:   31111,
+					}},
+					Selector:              map[string]string{"blah": "heh"},
+					ClusterIP:             "1.2.3.4",
+					LoadBalancerIP:        "5.6.7.8",
+					SessionAffinity:       "None",
+					ExternalTrafficPolicy: "Local",
+					HealthCheckNodePort:   32222,
+				},
+			},
+			expect: []string{
+				"Name", "bar",
+				"Namespace", "foo",
+				"Selector", "blah=heh",
+				"Type", "LoadBalancer",
+				"IP", "1.2.3.4",
+				"IPFamily", "IPv4",
 				"Port", "port-tcp", "8080/TCP",
 				"TargetPort", "targetPort/TCP",
 				"NodePort", "port-tcp", "31111/TCP",

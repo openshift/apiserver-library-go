@@ -25,7 +25,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
-	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
+	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 )
 
 // Code is the Status code/type which is returned from plugins.
@@ -152,13 +152,13 @@ type QueueSortPlugin interface {
 	Less(*PodInfo, *PodInfo) bool
 }
 
-// PrefilterPlugin is an interface that must be implemented by "prefilter" plugins.
+// PreFilterPlugin is an interface that must be implemented by "prefilter" plugins.
 // These plugins are called at the beginning of the scheduling cycle.
-type PrefilterPlugin interface {
+type PreFilterPlugin interface {
 	Plugin
-	// Prefilter is called at the beginning of the scheduling cycle. All prefilter
+	// PreFilter is called at the beginning of the scheduling cycle. All PreFilter
 	// plugins must return success or the pod will be rejected.
-	Prefilter(pc *PluginContext, p *v1.Pod) *Status
+	PreFilter(pc *PluginContext, p *v1.Pod) *Status
 }
 
 // FilterPlugin is an interface for Filter plugins. These plugins are called at the
@@ -225,24 +225,24 @@ type ReservePlugin interface {
 	Reserve(pc *PluginContext, p *v1.Pod, nodeName string) *Status
 }
 
-// PrebindPlugin is an interface that must be implemented by "prebind" plugins.
+// PreBindPlugin is an interface that must be implemented by "prebind" plugins.
 // These plugins are called before a pod being scheduled.
-type PrebindPlugin interface {
+type PreBindPlugin interface {
 	Plugin
-	// Prebind is called before binding a pod. All prebind plugins must return
+	// PreBind is called before binding a pod. All prebind plugins must return
 	// success or the pod will be rejected and won't be sent for binding.
-	Prebind(pc *PluginContext, p *v1.Pod, nodeName string) *Status
+	PreBind(pc *PluginContext, p *v1.Pod, nodeName string) *Status
 }
 
-// PostbindPlugin is an interface that must be implemented by "postbind" plugins.
+// PostBindPlugin is an interface that must be implemented by "postbind" plugins.
 // These plugins are called after a pod is successfully bound to a node.
-type PostbindPlugin interface {
+type PostBindPlugin interface {
 	Plugin
-	// Postbind is called after a pod is successfully bound. These plugins are
+	// PostBind is called after a pod is successfully bound. These plugins are
 	// informational. A common application of this extension point is for cleaning
 	// up. If a plugin needs to clean-up its state after a pod is scheduled and
-	// bound, Postbind is the extension point that it should register.
-	Postbind(pc *PluginContext, p *v1.Pod, nodeName string)
+	// bound, PostBind is the extension point that it should register.
+	PostBind(pc *PluginContext, p *v1.Pod, nodeName string)
 }
 
 // UnreservePlugin is an interface for Unreserve plugins. This is an informational
@@ -289,11 +289,11 @@ type Framework interface {
 	// QueueSortFunc returns the function to sort pods in scheduling queue
 	QueueSortFunc() LessFunc
 
-	// RunPrefilterPlugins runs the set of configured prefilter plugins. It returns
+	// RunPreFilterPlugins runs the set of configured prefilter plugins. It returns
 	// *Status and its code is set to non-success if any of the plugins returns
 	// anything but Success. If a non-success status is returned, then the scheduling
 	// cycle is aborted.
-	RunPrefilterPlugins(pc *PluginContext, pod *v1.Pod) *Status
+	RunPreFilterPlugins(pc *PluginContext, pod *v1.Pod) *Status
 
 	// RunFilterPlugins runs the set of configured filter plugins for pod on the
 	// given host. If any of these plugins returns any status other than "Success",
@@ -311,25 +311,15 @@ type Framework interface {
 	// a non-success status.
 	RunScorePlugins(pc *PluginContext, pod *v1.Pod, nodes []*v1.Node) (PluginToNodeScores, *Status)
 
-	// RunNormalizeScorePlugins runs the normalize score plugins. It should be called after
-	// RunScorePlugins with the PluginToNodeScores result. It then modifies the map with
-	// normalized scores. It returns a non-success Status if any of the normalize score plugins
-	// returns a non-success status.
-	RunNormalizeScorePlugins(pc *PluginContext, pod *v1.Pod, scores PluginToNodeScores) *Status
-
-	// ApplyScoreWeights applies weights to the score results. It should be called after
-	// RunNormalizeScorePlugins.
-	ApplyScoreWeights(pc *PluginContext, pod *v1.Pod, scores PluginToNodeScores) *Status
-
-	// RunPrebindPlugins runs the set of configured prebind plugins. It returns
+	// RunPreBindPlugins runs the set of configured prebind plugins. It returns
 	// *Status and its code is set to non-success if any of the plugins returns
 	// anything but Success. If the Status code is "Unschedulable", it is
 	// considered as a scheduling check failure, otherwise, it is considered as an
 	// internal error. In either case the pod is not going to be bound.
-	RunPrebindPlugins(pc *PluginContext, pod *v1.Pod, nodeName string) *Status
+	RunPreBindPlugins(pc *PluginContext, pod *v1.Pod, nodeName string) *Status
 
-	// RunPostbindPlugins runs the set of configured postbind plugins.
-	RunPostbindPlugins(pc *PluginContext, pod *v1.Pod, nodeName string)
+	// RunPostBindPlugins runs the set of configured postbind plugins.
+	RunPostBindPlugins(pc *PluginContext, pod *v1.Pod, nodeName string)
 
 	// RunReservePlugins runs the set of configured reserve plugins. If any of these
 	// plugins returns an error, it does not continue running the remaining ones and
@@ -367,7 +357,7 @@ type FrameworkHandle interface {
 	// cycle(permit/pre-bind/bind/post-bind/un-reserve plugin) should not use it,
 	// otherwise a concurrent read/write error might occur, they should use scheduler
 	// cache instead.
-	NodeInfoSnapshot() *internalcache.NodeInfoSnapshot
+	NodeInfoSnapshot() *schedulernodeinfo.Snapshot
 
 	// IterateOverWaitingPods acquires a read lock and iterates over the WaitingPods map.
 	IterateOverWaitingPods(callback func(WaitingPod))

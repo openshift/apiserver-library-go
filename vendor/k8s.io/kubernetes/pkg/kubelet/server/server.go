@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	restful "github.com/emicklei/go-restful"
+	"github.com/emicklei/go-restful"
 	cadvisormetrics "github.com/google/cadvisor/container"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/metrics"
@@ -56,6 +56,7 @@ import (
 	"k8s.io/apiserver/pkg/util/flushwriter"
 	"k8s.io/component-base/logs"
 	compbasemetrics "k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/core/v1/validation"
@@ -146,6 +147,8 @@ func ListenAndServeKubeletServer(
 	s := &http.Server{
 		Addr:           net.JoinHostPort(address.String(), strconv.FormatUint(uint64(port), 10)),
 		Handler:        &handler,
+		ReadTimeout:    60 * time.Minute,
+		WriteTimeout:   60 * time.Minute,
 		MaxHeaderBytes: 1 << 20,
 	}
 	if tlsOptions != nil {
@@ -167,6 +170,8 @@ func ListenAndServeKubeletReadOnlyServer(host HostInterface, resourceAnalyzer st
 	server := &http.Server{
 		Addr:           net.JoinHostPort(address.String(), strconv.FormatUint(uint64(port), 10)),
 		Handler:        &s,
+		ReadTimeout:    60 * time.Minute,
+		WriteTimeout:   60 * time.Minute,
 		MaxHeaderBytes: 1 << 20,
 	}
 	klog.Fatal(server.ListenAndServe())
@@ -296,7 +301,8 @@ func (s *Server) InstallDefaultHandlers(enableCAdvisorJSONEndpoints bool) {
 	s.restfulCont.Add(ws)
 
 	s.restfulCont.Add(stats.CreateHandlers(statsPath, s.host, s.resourceAnalyzer, enableCAdvisorJSONEndpoints))
-	s.restfulCont.Handle(metricsPath, prometheus.Handler())
+	//lint:ignore SA1019 https://github.com/kubernetes/enhancements/issues/1206
+	s.restfulCont.Handle(metricsPath, legacyregistry.Handler())
 
 	// cAdvisor metrics are exposed under the secured handler as well
 	r := prometheus.NewRegistry()
@@ -324,8 +330,9 @@ func (s *Server) InstallDefaultHandlers(enableCAdvisorJSONEndpoints bool) {
 	)
 
 	// prober metrics are exposed under a different endpoint
-	p := prometheus.NewRegistry()
-	compbasemetrics.RegisterProcessStartTime(p)
+
+	p := compbasemetrics.NewKubeRegistry()
+	compbasemetrics.RegisterProcessStartTime(p.RawRegister)
 	p.MustRegister(prober.ProberResults)
 	s.restfulCont.Handle(proberMetricsPath,
 		promhttp.HandlerFor(p, promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError}),
@@ -555,22 +562,7 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
 		return
 	}
 	// Check if containerName is valid.
-	containerExists := false
-	for _, container := range pod.Spec.Containers {
-		if container.Name == containerName {
-			containerExists = true
-			break
-		}
-	}
-	if !containerExists {
-		for _, container := range pod.Spec.InitContainers {
-			if container.Name == containerName {
-				containerExists = true
-				break
-			}
-		}
-	}
-	if !containerExists {
+	if kubecontainer.GetContainerSpec(pod, containerName) == nil {
 		response.WriteError(http.StatusNotFound, fmt.Errorf("container %q not found in pod %q", containerName, podID))
 		return
 	}
@@ -676,9 +668,7 @@ func getPortForwardRequestParams(req *restful.Request) portForwardRequestParams 
 	}
 }
 
-type responder struct {
-	errorMessage string
-}
+type responder struct{}
 
 func (r *responder) Error(w http.ResponseWriter, req *http.Request, err error) {
 	klog.Errorf("Error while proxying request: %v", err)

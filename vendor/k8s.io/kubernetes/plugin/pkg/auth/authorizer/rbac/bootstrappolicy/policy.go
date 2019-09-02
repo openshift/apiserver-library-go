@@ -45,6 +45,7 @@ const (
 	autoscalingGroup    = "autoscaling"
 	batchGroup          = "batch"
 	certificatesGroup   = "certificates.k8s.io"
+	discoveryGroup      = "discovery.k8s.io"
 	extensionsGroup     = "extensions"
 	policyGroup         = "policy"
 	rbacGroup           = "rbac.authorization.k8s.io"
@@ -181,8 +182,8 @@ func NodeRules() []rbacv1.PolicyRule {
 	return nodePolicyRules
 }
 
-// ClusterRoles returns the cluster roles to bootstrap an API server with
-func ClusterRoles() []rbacv1.ClusterRole {
+// clusterRoles returns the cluster roles to bootstrap an API server with
+func clusterRoles() []rbacv1.ClusterRole {
 	roles := []rbacv1.ClusterRole{
 		{
 			// a "root" role which can do absolutely anything
@@ -197,7 +198,8 @@ func ClusterRoles() []rbacv1.ClusterRole {
 			ObjectMeta: metav1.ObjectMeta{Name: "system:discovery"},
 			Rules: []rbacv1.PolicyRule{
 				rbacv1helpers.NewRule("get").URLs(
-					"/readyz", "/healthz", "/version", "/version/",
+					"/livez", "/readyz", "/healthz",
+					"/version", "/version/",
 					"/openapi", "/openapi/*",
 					"/api", "/api/*",
 					"/apis", "/apis/*",
@@ -217,7 +219,7 @@ func ClusterRoles() []rbacv1.ClusterRole {
 			ObjectMeta: metav1.ObjectMeta{Name: "system:public-info-viewer"},
 			Rules: []rbacv1.PolicyRule{
 				rbacv1helpers.NewRule("get").URLs(
-					"/readyz", "/healthz", "/version", "/version/",
+					"/livez", "/readyz", "/healthz", "/version", "/version/",
 				).RuleOrDie(),
 			},
 		},
@@ -527,7 +529,7 @@ func ClusterRoles() []rbacv1.ClusterRole {
 const systemNodeRoleName = "system:node"
 
 // ClusterRoleBindings return default rolebindings to the default roles
-func ClusterRoleBindings() []rbacv1.ClusterRoleBinding {
+func clusterRoleBindings() []rbacv1.ClusterRoleBinding {
 	rolebindings := []rbacv1.ClusterRoleBinding{
 		rbacv1helpers.NewClusterBinding("cluster-admin").Groups(user.SystemPrivilegedGroup).BindingOrDie(),
 		rbacv1helpers.NewClusterBinding("system:discovery").Groups(user.AllAuthenticated).BindingOrDie(),

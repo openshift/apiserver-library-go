@@ -56,10 +56,16 @@ type ServerRunOptions struct {
 	KubeletConfig             kubeletclient.KubeletClientConfig
 	KubernetesServiceNodePort int
 	MaxConnectionBytesPerSec  int64
-	ServiceClusterIPRange     net.IPNet // TODO: make this a list
-	ServiceNodePortRange      utilnet.PortRange
-	SSHKeyfile                string
-	SSHUser                   string
+	// ServiceClusterIPRange is mapped to input provided by user
+	ServiceClusterIPRanges string
+	//PrimaryServiceClusterIPRange and SecondaryServiceClusterIPRange are the results
+	// of parsing ServiceClusterIPRange into actual values
+	PrimaryServiceClusterIPRange   net.IPNet
+	SecondaryServiceClusterIPRange net.IPNet
+
+	ServiceNodePortRange utilnet.PortRange
+	SSHKeyfile           string
+	SSHUser              string
 
 	ProxyClientCertFile string
 	ProxyClientKeyFile  string
@@ -72,6 +78,8 @@ type ServerRunOptions struct {
 	ServiceAccountSigningKeyFile     string
 	ServiceAccountIssuer             serviceaccount.TokenGenerator
 	ServiceAccountTokenMaxExpiration time.Duration
+
+	OpenShiftConfig string
 }
 
 // NewServerRunOptions creates a new ServerRunOptions object with default parameters
@@ -114,7 +122,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		},
 		ServiceNodePortRange: kubeoptions.DefaultServiceNodePortRange,
 	}
-	s.ServiceClusterIPRange = kubeoptions.DefaultServiceIPCIDR
+	s.ServiceClusterIPRanges = kubeoptions.DefaultServiceIPCIDR.String()
 
 	// Overwrite the default for storage data format.
 	s.Etcd.DefaultStorageMediaType = "application/vnd.kubernetes.protobuf"
@@ -179,7 +187,8 @@ func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 		"of type NodePort, using this as the value of the port. If zero, the Kubernetes master "+
 		"service will be of type ClusterIP.")
 
-	fs.IPNetVar(&s.ServiceClusterIPRange, "service-cluster-ip-range", s.ServiceClusterIPRange, ""+
+	// TODO (khenidak) change documentation as we move IPv6DualStack feature from ALPHA to BETA
+	fs.StringVar(&s.ServiceClusterIPRanges, "service-cluster-ip-range", s.ServiceClusterIPRanges, ""+
 		"A CIDR notation IP range from which to assign service cluster IPs. This must not "+
 		"overlap with any IP ranges assigned to nodes for pods.")
 
@@ -232,6 +241,10 @@ func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 
 	fs.StringVar(&s.ServiceAccountSigningKeyFile, "service-account-signing-key-file", s.ServiceAccountSigningKeyFile, ""+
 		"Path to the file that contains the current private key of the service account token issuer. The issuer will sign issued ID tokens with this private key. (Requires the 'TokenRequest' feature gate.)")
+
+	fs.StringVar(&s.OpenShiftConfig, "openshift-config", s.OpenShiftConfig, "config for openshift")
+	fs.MarkDeprecated("openshift-config", "to be removed")
+	fs.MarkHidden("openshift-config")
 
 	return fss
 }

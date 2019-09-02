@@ -710,6 +710,13 @@ func describePod(pod *corev1.Pod, events *corev1.EventList) (string, error) {
 			describeContainers("Init Containers", pod.Spec.InitContainers, pod.Status.InitContainerStatuses, EnvValueRetriever(pod), w, "")
 		}
 		describeContainers("Containers", pod.Spec.Containers, pod.Status.ContainerStatuses, EnvValueRetriever(pod), w, "")
+		if len(pod.Spec.EphemeralContainers) > 0 {
+			var ec []corev1.Container
+			for i := range pod.Spec.EphemeralContainers {
+				ec = append(ec, corev1.Container(pod.Spec.EphemeralContainers[i].EphemeralContainerCommon))
+			}
+			describeContainers("Ephemeral Containers", ec, pod.Status.EphemeralContainerStatuses, EnvValueRetriever(pod), w, "")
+		}
 		if len(pod.Spec.ReadinessGates) > 0 {
 			w.Write(LEVEL_0, "Readiness Gates:\n  Type\tStatus\n")
 			for _, g := range pod.Spec.ReadinessGates {
@@ -1700,6 +1707,10 @@ func describeContainerProbe(container corev1.Container, w PrefixWriter) {
 		probe := DescribeProbe(container.ReadinessProbe)
 		w.Write(LEVEL_2, "Readiness:\t%s\n", probe)
 	}
+	if container.StartupProbe != nil {
+		probe := DescribeProbe(container.StartupProbe)
+		w.Write(LEVEL_2, "Startup:\t%s\n", probe)
+	}
 }
 
 func describeContainerVolumes(container corev1.Container, w PrefixWriter) {
@@ -2471,6 +2482,11 @@ func describeService(service *corev1.Service, endpoints *corev1.Endpoints, event
 		w.Write(LEVEL_0, "Selector:\t%s\n", labels.FormatLabels(service.Spec.Selector))
 		w.Write(LEVEL_0, "Type:\t%s\n", service.Spec.Type)
 		w.Write(LEVEL_0, "IP:\t%s\n", service.Spec.ClusterIP)
+
+		if service.Spec.IPFamily != nil {
+			w.Write(LEVEL_0, "IPFamily:\t%s\n", *(service.Spec.IPFamily))
+		}
+
 		if len(service.Spec.ExternalIPs) > 0 {
 			w.Write(LEVEL_0, "External IPs:\t%v\n", strings.Join(service.Spec.ExternalIPs, ","))
 		}
@@ -3373,7 +3389,7 @@ func getPodsTotalRequestsAndLimits(podList *corev1.PodList) (reqs map[corev1.Res
 		podReqs, podLimits := resourcehelper.PodRequestsAndLimits(&pod)
 		for podReqName, podReqValue := range podReqs {
 			if value, ok := reqs[podReqName]; !ok {
-				reqs[podReqName] = *podReqValue.Copy()
+				reqs[podReqName] = podReqValue.DeepCopy()
 			} else {
 				value.Add(podReqValue)
 				reqs[podReqName] = value
@@ -3381,7 +3397,7 @@ func getPodsTotalRequestsAndLimits(podList *corev1.PodList) (reqs map[corev1.Res
 		}
 		for podLimitName, podLimitValue := range podLimits {
 			if value, ok := limits[podLimitName]; !ok {
-				limits[podLimitName] = *podLimitValue.Copy()
+				limits[podLimitName] = podLimitValue.DeepCopy()
 			} else {
 				value.Add(podLimitValue)
 				limits[podLimitName] = value

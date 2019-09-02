@@ -167,7 +167,7 @@ type genericScheduler struct {
 	framework                framework.Framework
 	extenders                []algorithm.SchedulerExtender
 	alwaysCheckAllPredicates bool
-	nodeInfoSnapshot         *internalcache.NodeInfoSnapshot
+	nodeInfoSnapshot         *schedulernodeinfo.Snapshot
 	volumeBinder             *volumebinder.VolumeBinder
 	pvcLister                corelisters.PersistentVolumeClaimLister
 	pdbLister                algorithm.PDBLister
@@ -195,9 +195,9 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, pluginContext *framework.Plugin
 	}
 
 	// Run "prefilter" plugins.
-	prefilterStatus := g.framework.RunPrefilterPlugins(pluginContext, pod)
-	if !prefilterStatus.IsSuccess() {
-		return result, prefilterStatus.AsError()
+	preFilterStatus := g.framework.RunPreFilterPlugins(pluginContext, pod)
+	if !preFilterStatus.IsSuccess() {
+		return result, preFilterStatus.AsError()
 	}
 
 	numNodes := g.cache.NodeTree().NumNodes()
@@ -573,7 +573,7 @@ func (g *genericScheduler) findNodesThatFit(pluginContext *framework.PluginConte
 
 // addNominatedPods adds pods with equal or greater priority which are nominated
 // to run on the node given in nodeInfo to meta and nodeInfo. It returns 1) whether
-// any pod was found, 2) augmented meta data, 3) augmented nodeInfo.
+// any pod was added, 2) augmented meta data, 3) augmented nodeInfo.
 func addNominatedPods(pod *v1.Pod, meta predicates.PredicateMetadata,
 	nodeInfo *schedulernodeinfo.NodeInfo, queue internalqueue.SchedulingQueue) (bool, predicates.PredicateMetadata,
 	*schedulernodeinfo.NodeInfo) {
@@ -590,15 +590,17 @@ func addNominatedPods(pod *v1.Pod, meta predicates.PredicateMetadata,
 		metaOut = meta.ShallowCopy()
 	}
 	nodeInfoOut := nodeInfo.Clone()
+	podsAdded := false
 	for _, p := range nominatedPods {
 		if util.GetPodPriority(p) >= util.GetPodPriority(pod) && p.UID != pod.UID {
 			nodeInfoOut.AddPod(p)
 			if metaOut != nil {
 				metaOut.AddPod(p, nodeInfoOut)
 			}
+			podsAdded = true
 		}
 	}
-	return true, metaOut, nodeInfoOut
+	return podsAdded, metaOut, nodeInfoOut
 }
 
 // podFitsOnNode checks whether a node given by NodeInfo satisfies the given predicate functions.
@@ -782,18 +784,6 @@ func PrioritizeNodes(
 	scoresMap, scoreStatus := framework.RunScorePlugins(pluginContext, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return schedulerapi.HostPriorityList{}, scoreStatus.AsError()
-	}
-
-	// Run the Normalize Score plugins.
-	status := framework.RunNormalizeScorePlugins(pluginContext, pod, scoresMap)
-	if !status.IsSuccess() {
-		return schedulerapi.HostPriorityList{}, status.AsError()
-	}
-
-	// Apply weights for scores.
-	status = framework.ApplyScoreWeights(pluginContext, pod, scoresMap)
-	if !status.IsSuccess() {
-		return schedulerapi.HostPriorityList{}, status.AsError()
 	}
 
 	// Summarize all scores.
@@ -1107,7 +1097,7 @@ func selectVictimsOnNode(
 	removePod := func(rp *v1.Pod) {
 		nodeInfoCopy.RemovePod(rp)
 		if meta != nil {
-			meta.RemovePod(rp)
+			meta.RemovePod(rp, nodeInfoCopy.Node())
 		}
 	}
 	addPod := func(ap *v1.Pod) {

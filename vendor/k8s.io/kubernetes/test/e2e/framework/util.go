@@ -32,12 +32,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"text/tabwriter"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -74,7 +74,6 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/client/conditions"
 	"k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/controller/service"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/master/ports"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
@@ -120,9 +119,6 @@ const (
 	// failures caused by leaked resources from a previous test run.
 	NamespaceCleanupTimeout = 15 * time.Minute
 
-	// Some pods can take much longer to get ready due to volume attach/detach latency.
-	slowPodStartTimeout = 15 * time.Minute
-
 	// ServiceStartTimeout is how long to wait for a service endpoint to be resolvable.
 	ServiceStartTimeout = 3 * time.Minute
 
@@ -149,10 +145,6 @@ const (
 	// PodReadyBeforeTimeout is how long pods have to be "ready" when a test begins.
 	PodReadyBeforeTimeout = 5 * time.Minute
 
-	// How long pods have to become scheduled onto nodes
-	podScheduledBeforeTimeout = PodListTimeout + (20 * time.Second)
-
-	podRespondingTimeout = 15 * time.Minute
 	// ClaimProvisionTimeout is how long claims have to become dynamically provisioned.
 	ClaimProvisionTimeout = 5 * time.Minute
 
@@ -208,15 +200,11 @@ var (
 	// BusyBoxImage is the image URI of BusyBox.
 	BusyBoxImage = imageutils.GetE2EImage(imageutils.BusyBox)
 
+	// AgnHostImage is the image URI of AgnHost
+	AgnHostImage = imageutils.GetE2EImage(imageutils.Agnhost)
+
 	// For parsing Kubectl version for version-skewed testing.
 	gitVersionRegexp = regexp.MustCompile("GitVersion:\"(v.+?)\"")
-
-	// Slice of regexps for names of pods that have to be running to consider a Node "healthy"
-	requiredPerNodePods = []*regexp.Regexp{
-		regexp.MustCompile(".*kube-proxy.*"),
-		regexp.MustCompile(".*fluentd-elasticsearch.*"),
-		regexp.MustCompile(".*node-problem-detector.*"),
-	}
 
 	// ServeHostnameImage is a serve hostname image name.
 	ServeHostnameImage = imageutils.GetE2EImage(imageutils.Agnhost)
@@ -347,6 +335,13 @@ func SkipUnlessNodeOSDistroIs(supportedNodeOsDistros ...string) {
 	}
 }
 
+// SkipIfNodeOSDistroIs skips if the node OS distro is included in the unsupportedNodeOsDistros.
+func SkipIfNodeOSDistroIs(unsupportedNodeOsDistros ...string) {
+	if NodeOSDistroIs(unsupportedNodeOsDistros...) {
+		skipInternalf(1, "Not supported for node OS distro %v (is %s)", unsupportedNodeOsDistros, TestContext.NodeOSDistro)
+	}
+}
+
 // SkipUnlessTaintBasedEvictionsEnabled skips if the TaintBasedEvictions is not enabled.
 func SkipUnlessTaintBasedEvictionsEnabled() {
 	if !utilfeature.DefaultFeatureGate.Enabled(features.TaintBasedEvictions) {
@@ -419,6 +414,8 @@ func runKubernetesServiceTestContainer(c clientset.Interface, ns string) {
 // getDefaultClusterIPFamily obtains the default IP family of the cluster
 // using the Cluster IP address of the kubernetes service created in the default namespace
 // This unequivocally identifies the default IP family because services are single family
+// TODO: dual-stack may support multiple families per service
+// but we can detect if a cluster is dual stack because pods have two addresses (one per family)
 func getDefaultClusterIPFamily(c clientset.Interface) string {
 	// Get the ClusterIP of the kubernetes service created in the default namespace
 	svc, err := c.CoreV1().Services(metav1.NamespaceDefault).Get("kubernetes", metav1.GetOptions{})
@@ -432,10 +429,15 @@ func getDefaultClusterIPFamily(c clientset.Interface) string {
 	return "ipv4"
 }
 
+// ClusterIsIPv6 returns true if the cluster is IPv6
+func ClusterIsIPv6() bool {
+	return TestContext.IPFamily == "ipv6"
+}
+
 // ProviderIs returns true if the provider is included is the providers. Otherwise false.
 func ProviderIs(providers ...string) bool {
 	for _, provider := range providers {
-		if strings.ToLower(provider) == strings.ToLower(TestContext.Provider) {
+		if strings.EqualFold(provider, TestContext.Provider) {
 			return true
 		}
 	}
@@ -445,7 +447,7 @@ func ProviderIs(providers ...string) bool {
 // MasterOSDistroIs returns true if the master OS distro is included in the supportedMasterOsDistros. Otherwise false.
 func MasterOSDistroIs(supportedMasterOsDistros ...string) bool {
 	for _, distro := range supportedMasterOsDistros {
-		if strings.ToLower(distro) == strings.ToLower(TestContext.MasterOSDistro) {
+		if strings.EqualFold(distro, TestContext.MasterOSDistro) {
 			return true
 		}
 	}
@@ -455,7 +457,7 @@ func MasterOSDistroIs(supportedMasterOsDistros ...string) bool {
 // NodeOSDistroIs returns true if the node OS distro is included in the supportedNodeOsDistros. Otherwise false.
 func NodeOSDistroIs(supportedNodeOsDistros ...string) bool {
 	for _, distro := range supportedNodeOsDistros {
-		if strings.ToLower(distro) == strings.ToLower(TestContext.NodeOSDistro) {
+		if strings.EqualFold(distro, TestContext.NodeOSDistro) {
 			return true
 		}
 	}
@@ -474,8 +476,8 @@ func ProxyMode(f *Framework) (string, error) {
 			Containers: []v1.Container{
 				{
 					Name:    "detector",
-					Image:   imageutils.GetE2EImage(imageutils.Agnhost),
-					Command: []string{"/bin/sleep", "3600"},
+					Image:   AgnHostImage,
+					Command: []string{"pause"},
 				},
 			},
 		},
@@ -518,32 +520,6 @@ func SkipIfMissingResource(dynamicClient dynamic.Interface, gvr schema.GroupVers
 
 // ProvidersWithSSH are those providers where each node is accessible with SSH
 var ProvidersWithSSH = []string{"gce", "gke", "aws", "local"}
-
-type podCondition func(pod *v1.Pod) (bool, error)
-
-// errorBadPodsStates create error message of basic info of bad pods for debugging.
-func errorBadPodsStates(badPods []v1.Pod, desiredPods int, ns, desiredState string, timeout time.Duration) string {
-	errStr := fmt.Sprintf("%d / %d pods in namespace %q are NOT in %s state in %v\n", len(badPods), desiredPods, ns, desiredState, timeout)
-	// Print bad pods info only if there are fewer than 10 bad pods
-	if len(badPods) > 10 {
-		return errStr + "There are too many bad pods. Please check log for details."
-	}
-
-	buf := bytes.NewBuffer(nil)
-	w := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
-	fmt.Fprintln(w, "POD\tNODE\tPHASE\tGRACE\tCONDITIONS")
-	for _, badPod := range badPods {
-		grace := ""
-		if badPod.DeletionGracePeriodSeconds != nil {
-			grace = fmt.Sprintf("%ds", *badPod.DeletionGracePeriodSeconds)
-		}
-		podInfo := fmt.Sprintf("%s\t%s\t%s\t%s\t%+v",
-			badPod.ObjectMeta.Name, badPod.Spec.NodeName, badPod.Status.Phase, grace, badPod.Status.Conditions)
-		fmt.Fprintln(w, podInfo)
-	}
-	w.Flush()
-	return errStr + buf.String()
-}
 
 // WaitForDaemonSets for all daemonsets in the given namespace to be ready
 // (defined as all but 'allowedNotReadyNodes' pods associated with that
@@ -1356,16 +1332,28 @@ func RandomSuffix() string {
 
 // ExpectEqual expects the specified two are the same, otherwise an exception raises
 func ExpectEqual(actual interface{}, extra interface{}, explain ...interface{}) {
+	if isEqual, _ := gomega.Equal(extra).Match(actual); !isEqual {
+		e2elog.Logf("Unexpected unequal occurred: %v and %v", actual, extra)
+		debug.PrintStack()
+	}
 	gomega.Expect(actual).To(gomega.Equal(extra), explain...)
 }
 
 // ExpectNotEqual expects the specified two are not the same, otherwise an exception raises
 func ExpectNotEqual(actual interface{}, extra interface{}, explain ...interface{}) {
+	if isEqual, _ := gomega.Equal(extra).Match(actual); isEqual {
+		e2elog.Logf("Expect to be unequal: %v and %v", actual, extra)
+		debug.PrintStack()
+	}
 	gomega.Expect(actual).NotTo(gomega.Equal(extra), explain...)
 }
 
 // ExpectError expects an error happens, otherwise an exception raises
 func ExpectError(err error, explain ...interface{}) {
+	if err == nil {
+		e2elog.Logf("Expect error to occur.")
+		debug.PrintStack()
+	}
 	gomega.Expect(err).To(gomega.HaveOccurred(), explain...)
 }
 
@@ -1377,9 +1365,6 @@ func ExpectNoError(err error, explain ...interface{}) {
 // ExpectNoErrorWithOffset checks if "err" is set, and if so, fails assertion while logging the error at "offset" levels above its caller
 // (for example, for call chain f -> g -> ExpectNoErrorWithOffset(1, ...) error would be logged for "f").
 func ExpectNoErrorWithOffset(offset int, err error, explain ...interface{}) {
-	if err != nil {
-		e2elog.Logf("Unexpected error occurred: %v", err)
-	}
 	gomega.ExpectWithOffset(1+offset, err).NotTo(gomega.HaveOccurred(), explain...)
 }
 
@@ -1392,6 +1377,9 @@ func ExpectNoErrorWithRetries(fn func() error, maxRetries int, explain ...interf
 			return
 		}
 		e2elog.Logf("(Attempt %d of %d) Unexpected error occurred: %v", i+1, maxRetries, err)
+	}
+	if err != nil {
+		debug.PrintStack()
 	}
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), explain...)
 }
@@ -1554,12 +1542,12 @@ func (b KubectlBuilder) ExecOrDie() string {
 
 func isTimeout(err error) bool {
 	switch err := err.(type) {
-	case net.Error:
-		if err.Timeout() {
-			return true
-		}
 	case *url.Error:
 		if err, ok := err.Err.(net.Error); ok && err.Timeout() {
+			return true
+		}
+	case net.Error:
+		if err.Timeout() {
 			return true
 		}
 	}
@@ -1985,7 +1973,7 @@ func WaitForAllNodesSchedulable(c clientset.Interface, timeout time.Duration) er
 		}
 		for i := range nodes.Items {
 			node := &nodes.Items[i]
-			if _, hasMasterRoleLabel := node.ObjectMeta.Labels[service.LabelNodeRoleMaster]; hasMasterRoleLabel {
+			if _, hasMasterRoleLabel := node.ObjectMeta.Labels["node-role.kubernetes.io/master"]; hasMasterRoleLabel {
 				// Kops clusters have masters with spec.unscheduable = false and
 				// node-role.kubernetes.io/master NoSchedule taint.
 				// Don't wait for them.
@@ -2201,10 +2189,10 @@ func ScaleResource(
 	size uint,
 	wait bool,
 	kind schema.GroupKind,
-	gr schema.GroupResource,
+	gvr schema.GroupVersionResource,
 ) error {
 	ginkgo.By(fmt.Sprintf("Scaling %v %s in namespace %s to %d", kind, name, ns, size))
-	if err := testutils.ScaleResourceWithRetries(scalesGetter, ns, name, size, gr); err != nil {
+	if err := testutils.ScaleResourceWithRetries(scalesGetter, ns, name, size, gvr); err != nil {
 		return fmt.Errorf("error while scaling RC %s to %d replicas: %v", name, size, err)
 	}
 	if !wait {
@@ -2469,6 +2457,9 @@ func RestartKubelet(host string) error {
 			sudoPresent = true
 		}
 		sshResult, err = e2essh.SSH("systemctl --version", host, TestContext.Provider)
+		if err != nil {
+			return fmt.Errorf("Failed to execute command 'systemctl' on host %s with error %v", host, err)
+		}
 		if !strings.Contains(sshResult.Stderr, "command not found") {
 			cmd = "systemctl restart kubelet"
 		} else {
@@ -2876,29 +2867,19 @@ func UnblockNetwork(from string, to string) {
 	}
 }
 
-// PingCommand is the type to hold ping command.
-type PingCommand string
-
-const (
-	// IPv4PingCommand is a ping command for IPv4.
-	IPv4PingCommand PingCommand = "ping"
-	// IPv6PingCommand is a ping command for IPv6.
-	IPv6PingCommand PingCommand = "ping6"
-)
-
 // CheckConnectivityToHost launches a pod to test connectivity to the specified
 // host. An error will be returned if the host is not reachable from the pod.
 //
 // An empty nodeName will use the schedule to choose where the pod is executed.
-func CheckConnectivityToHost(f *Framework, nodeName, podName, host string, pingCmd PingCommand, timeout int) error {
+func CheckConnectivityToHost(f *Framework, nodeName, podName, host string, port, timeout int) error {
 	contName := fmt.Sprintf("%s-container", podName)
 
 	command := []string{
-		string(pingCmd),
-		"-c", "3", // send 3 pings
-		"-W", "2", // wait at most 2 seconds for a reply
+		"nc",
+		"-vz",
 		"-w", strconv.Itoa(timeout),
 		host,
+		strconv.Itoa(port),
 	}
 
 	pod := &v1.Pod{
@@ -2909,7 +2890,7 @@ func CheckConnectivityToHost(f *Framework, nodeName, podName, host string, pingC
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   BusyBoxImage,
+					Image:   AgnHostImage,
 					Command: command,
 				},
 			},
@@ -3257,7 +3238,7 @@ func (f *Framework) NewAgnhostPod(name string, args ...string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:  "agnhost",
-					Image: imageutils.GetE2EImage(imageutils.Agnhost),
+					Image: AgnHostImage,
 					Args:  args,
 				},
 			},

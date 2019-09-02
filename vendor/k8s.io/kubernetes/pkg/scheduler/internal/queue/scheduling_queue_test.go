@@ -30,8 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/clock"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
-	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
+	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 	"k8s.io/kubernetes/pkg/scheduler/util"
 )
 
@@ -163,11 +163,11 @@ func (*fakeFramework) QueueSortFunc() framework.LessFunc {
 	}
 }
 
-func (*fakeFramework) NodeInfoSnapshot() *internalcache.NodeInfoSnapshot {
+func (*fakeFramework) NodeInfoSnapshot() *schedulernodeinfo.Snapshot {
 	return nil
 }
 
-func (*fakeFramework) RunPrefilterPlugins(pc *framework.PluginContext, pod *v1.Pod) *framework.Status {
+func (*fakeFramework) RunPreFilterPlugins(pc *framework.PluginContext, pod *v1.Pod) *framework.Status {
 	return nil
 }
 
@@ -179,15 +179,7 @@ func (*fakeFramework) RunScorePlugins(pc *framework.PluginContext, pod *v1.Pod, 
 	return nil, nil
 }
 
-func (*fakeFramework) RunNormalizeScorePlugins(pc *framework.PluginContext, pod *v1.Pod, scores framework.PluginToNodeScores) *framework.Status {
-	return nil
-}
-
-func (*fakeFramework) ApplyScoreWeights(pc *framework.PluginContext, pod *v1.Pod, scores framework.PluginToNodeScores) *framework.Status {
-	return nil
-}
-
-func (*fakeFramework) RunPrebindPlugins(pc *framework.PluginContext, pod *v1.Pod, nodeName string) *framework.Status {
+func (*fakeFramework) RunPreBindPlugins(pc *framework.PluginContext, pod *v1.Pod, nodeName string) *framework.Status {
 	return nil
 }
 
@@ -195,7 +187,7 @@ func (*fakeFramework) RunBindPlugins(pc *framework.PluginContext, pod *v1.Pod, n
 	return nil
 }
 
-func (*fakeFramework) RunPostbindPlugins(pc *framework.PluginContext, pod *v1.Pod, nodeName string) {}
+func (*fakeFramework) RunPostBindPlugins(pc *framework.PluginContext, pod *v1.Pod, nodeName string) {}
 
 func (*fakeFramework) RunPostFilterPlugins(pc *framework.PluginContext, pod *v1.Pod, nodes []*v1.Node, filteredNodesStatuses framework.NodeToStatusMap) *framework.Status {
 	return nil
@@ -1225,6 +1217,7 @@ func TestPodTimestamp(t *testing.T) {
 func TestPendingPodsMetric(t *testing.T) {
 	total := 50
 	timestamp := time.Now()
+	metrics.Register()
 	var pInfos = make([]*framework.PodInfo, 0, total)
 	for i := 1; i <= total; i++ {
 		p := &framework.PodInfo{
@@ -1320,9 +1313,9 @@ func TestPendingPodsMetric(t *testing.T) {
 	}
 
 	resetMetrics := func() {
-		metrics.ActivePods.Set(0)
-		metrics.BackoffPods.Set(0)
-		metrics.UnschedulablePods.Set(0)
+		metrics.ActivePods().Set(0)
+		metrics.BackoffPods().Set(0)
+		metrics.UnschedulablePods().Set(0)
 	}
 
 	for _, test := range tests {
@@ -1337,7 +1330,7 @@ func TestPendingPodsMetric(t *testing.T) {
 
 			var activeNum, backoffNum, unschedulableNum float64
 			metricProto := &dto.Metric{}
-			if err := metrics.ActivePods.Write(metricProto); err != nil {
+			if err := metrics.ActivePods().Write(metricProto); err != nil {
 				t.Errorf("error writing ActivePods metric: %v", err)
 			}
 			activeNum = metricProto.Gauge.GetValue()
@@ -1345,7 +1338,7 @@ func TestPendingPodsMetric(t *testing.T) {
 				t.Errorf("ActivePods: Expected %v, got %v", test.expected[0], activeNum)
 			}
 
-			if err := metrics.BackoffPods.Write(metricProto); err != nil {
+			if err := metrics.BackoffPods().Write(metricProto); err != nil {
 				t.Errorf("error writing BackoffPods metric: %v", err)
 			}
 			backoffNum = metricProto.Gauge.GetValue()
@@ -1353,7 +1346,7 @@ func TestPendingPodsMetric(t *testing.T) {
 				t.Errorf("BackoffPods: Expected %v, got %v", test.expected[1], backoffNum)
 			}
 
-			if err := metrics.UnschedulablePods.Write(metricProto); err != nil {
+			if err := metrics.UnschedulablePods().Write(metricProto); err != nil {
 				t.Errorf("error writing UnschedulablePods metric: %v", err)
 			}
 			unschedulableNum = metricProto.Gauge.GetValue()
