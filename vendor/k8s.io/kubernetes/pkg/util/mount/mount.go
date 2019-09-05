@@ -20,31 +20,14 @@ limitations under the License.
 package mount
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// FileType enumerates the known set of possible file types.
-type FileType string
-
 const (
 	// Default mount command if mounter path is not specified.
 	defaultMountCommand = "mount"
-
-	// FileTypeBlockDev defines a constant for the block device FileType.
-	FileTypeBlockDev FileType = "BlockDevice"
-	// FileTypeCharDev defines a constant for the character device FileType.
-	FileTypeCharDev FileType = "CharDevice"
-	// FileTypeDirectory defines a constant for the directory FileType.
-	FileTypeDirectory FileType = "Directory"
-	// FileTypeFile defines a constant for the file FileType.
-	FileTypeFile FileType = "File"
-	// FileTypeSocket defines a constant for the socket FileType.
-	FileTypeSocket FileType = "Socket"
-	// FileTypeUnknown defines a constant for an unknown FileType.
-	FileTypeUnknown FileType = ""
 )
 
 // Interface defines the set of methods to allow for mount operations on a system.
@@ -58,8 +41,6 @@ type Interface interface {
 	// consistent (i.e. it could change between chunked reads). This is guaranteed
 	// to be consistent.
 	List() ([]MountPoint, error)
-	// IsMountPointMatch determines if the mountpoint matches the dir.
-	IsMountPointMatch(mp MountPoint, dir string) bool
 	// IsLikelyNotMountPoint uses heuristics to determine if a directory
 	// is not a mountpoint.
 	// It should return ErrNotExist when the directory does not exist.
@@ -72,39 +53,6 @@ type Interface interface {
 	GetMountRefs(pathname string) ([]string, error)
 }
 
-// HostUtils defines the set of methods for interacting with paths on a host.
-type HostUtils interface {
-	// DeviceOpened determines if the device (e.g. /dev/sdc) is in use elsewhere
-	// on the system, i.e. still mounted.
-	DeviceOpened(pathname string) (bool, error)
-	// PathIsDevice determines if a path is a device.
-	PathIsDevice(pathname string) (bool, error)
-	// GetDeviceNameFromMount finds the device name by checking the mount path
-	// to get the global mount path within its plugin directory.
-	GetDeviceNameFromMount(mounter Interface, mountPath, pluginMountDir string) (string, error)
-	// MakeRShared checks that given path is on a mount with 'rshared' mount
-	// propagation. If not, it bind-mounts the path as rshared.
-	MakeRShared(path string) error
-	// GetFileType checks for file/directory/socket/block/character devices.
-	GetFileType(pathname string) (FileType, error)
-	// MakeFile creates an empty file.
-	MakeFile(pathname string) error
-	// MakeDir creates a new directory.
-	MakeDir(pathname string) error
-	// PathExists tests if the given path already exists
-	// Error is returned on any other error than "file not found".
-	PathExists(pathname string) (bool, error)
-	// EvalHostSymlinks returns the path name after evaluating symlinks.
-	EvalHostSymlinks(pathname string) (string, error)
-	// GetOwner returns the integer ID for the user and group of the given path
-	GetOwner(pathname string) (int64, int64, error)
-	// GetSELinuxSupport returns true if given path is on a mount that supports
-	// SELinux.
-	GetSELinuxSupport(pathname string) (bool, error)
-	// GetMode returns permissions of the path.
-	GetMode(pathname string) (os.FileMode, error)
-}
-
 // Exec is an interface for executing commands on systems.
 type Exec interface {
 	// Run executes a command and returns its stdout + stderr combined in one
@@ -115,10 +63,6 @@ type Exec interface {
 // Compile-time check to ensure all Mounter implementations satisfy
 // the mount interface.
 var _ Interface = &Mounter{}
-
-// Compile-time check to ensure all HostUtil implementations satisfy
-// the HostUtils Interface.
-var _ HostUtils = &hostUtil{}
 
 // MountPoint represents a single line in /proc/mounts or /etc/fstab.
 type MountPoint struct {
@@ -216,7 +160,7 @@ func GetDeviceNameFromMount(mounter Interface, mountPath string) (string, int, e
 // IsNotMountPoint detects bind mounts in linux.
 // IsNotMountPoint enumerates all the mountpoints using List() and
 // the list of mountpoints may be large, then it uses
-// IsMountPointMatch to evaluate whether the directory is a mountpoint.
+// isMountPointMatch to evaluate whether the directory is a mountpoint.
 func IsNotMountPoint(mounter Interface, file string) (bool, error) {
 	// IsLikelyNotMountPoint provides a quick check
 	// to determine whether file IS A mountpoint.
@@ -236,8 +180,7 @@ func IsNotMountPoint(mounter Interface, file string) (bool, error) {
 	}
 
 	// Resolve any symlinks in file, kernel would do the same and use the resolved path in /proc/mounts.
-	hu := NewHostUtil()
-	resolvedFile, err := hu.EvalHostSymlinks(file)
+	resolvedFile, err := filepath.EvalSymlinks(file)
 	if err != nil {
 		return true, err
 	}
@@ -249,7 +192,7 @@ func IsNotMountPoint(mounter Interface, file string) (bool, error) {
 		return notMnt, mountPointsErr
 	}
 	for _, mp := range mountPoints {
-		if mounter.IsMountPointMatch(mp, resolvedFile) {
+		if isMountPointMatch(mp, resolvedFile) {
 			notMnt = false
 			break
 		}
@@ -257,11 +200,11 @@ func IsNotMountPoint(mounter Interface, file string) (bool, error) {
 	return notMnt, nil
 }
 
-// IsBind detects whether a bind mount is being requested and makes the remount options to
+// MakeBindOpts detects whether a bind mount is being requested and makes the remount options to
 // use in case of bind mount, due to the fact that bind mount doesn't respect mount options.
 // The list equals:
 //   options - 'bind' + 'remount' (no duplicate)
-func IsBind(options []string) (bool, []string, []string) {
+func MakeBindOpts(options []string) (bool, []string, []string) {
 	// Because we have an FD opened on the subpath bind mount, the "bind" option
 	// needs to be included, otherwise the mount target will error as busy if you
 	// remount as readonly.
@@ -302,23 +245,6 @@ func checkForNetDev(options []string) bool {
 	return false
 }
 
-// HasMountRefs checks if the given mountPath has mountRefs.
-// TODO: this is a workaround for the unmount device issue caused by gci mounter.
-// In GCI cluster, if gci mounter is used for mounting, the container started by mounter
-// script will cause additional mounts created in the container. Since these mounts are
-// irrelevant to the original mounts, they should be not considered when checking the
-// mount references. Current solution is to filter out those mount paths that contain
-// the string of original mount path.
-// Plan to work on better approach to solve this issue.
-func HasMountRefs(mountPath string, mountRefs []string) bool {
-	for _, ref := range mountRefs {
-		if !strings.Contains(ref, mountPath) {
-			return true
-		}
-	}
-	return false
-}
-
 // PathWithinBase checks if give path is within given base directory.
 func PathWithinBase(fullPath, basePath string) bool {
 	rel, err := filepath.Rel(basePath, fullPath)
@@ -336,38 +262,4 @@ func PathWithinBase(fullPath, basePath string) bool {
 func StartsWithBackstep(rel string) bool {
 	// normalize to / and check for ../
 	return rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../")
-}
-
-// getFileType checks for file/directory/socket and block/character devices.
-func getFileType(pathname string) (FileType, error) {
-	var pathType FileType
-	info, err := os.Stat(pathname)
-	if os.IsNotExist(err) {
-		return pathType, fmt.Errorf("path %q does not exist", pathname)
-	}
-	// err in call to os.Stat
-	if err != nil {
-		return pathType, err
-	}
-
-	// checks whether the mode is the target mode.
-	isSpecificMode := func(mode, targetMode os.FileMode) bool {
-		return mode&targetMode == targetMode
-	}
-
-	mode := info.Mode()
-	if mode.IsDir() {
-		return FileTypeDirectory, nil
-	} else if mode.IsRegular() {
-		return FileTypeFile, nil
-	} else if isSpecificMode(mode, os.ModeSocket) {
-		return FileTypeSocket, nil
-	} else if isSpecificMode(mode, os.ModeDevice) {
-		if isSpecificMode(mode, os.ModeCharDevice) {
-			return FileTypeCharDev, nil
-		}
-		return FileTypeBlockDev, nil
-	}
-
-	return pathType, fmt.Errorf("only recognise file, directory, socket, block device and character device")
 }

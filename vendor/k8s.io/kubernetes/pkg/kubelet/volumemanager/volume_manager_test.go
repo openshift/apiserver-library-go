@@ -46,6 +46,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume"
 	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 	"k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/types"
 )
 
@@ -301,7 +302,7 @@ func newTestVolumeManager(tmpDir string, podManager kubepod.Manager, kubeClient 
 		plugMgr,
 		&containertest.FakeRuntime{},
 		&mount.FakeMounter{},
-		&mount.FakeHostUtil{},
+		hostutil.NewFakeHostUtil(nil),
 		"",
 		fakeRecorder,
 		false, /* experimentalCheckNodeCapabilitiesBeforeMount */
@@ -426,7 +427,6 @@ func delayClaimBecomesBound(
 		Phase: v1.ClaimBound,
 	}
 	kubeClient.CoreV1().PersistentVolumeClaims(namespace).Update(volumeClaim)
-	return
 }
 
 func runVolumeManager(manager VolumeManager) chan struct{} {

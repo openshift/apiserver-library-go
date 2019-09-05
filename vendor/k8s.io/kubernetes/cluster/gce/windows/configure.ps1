@@ -100,7 +100,6 @@ try {
   Dump-DebugInfoToConsole
   Set-PrerequisiteOptions
   $kube_env = Fetch-KubeEnv
-  Disable-WindowsDefender
 
   if (Test-IsTestCluster $kube_env) {
     Log-Output 'Test cluster detected, installing OpenSSH.'
@@ -112,7 +111,10 @@ try {
   Set-EnvironmentVars
   Create-Directories
   Download-HelperScripts
-  InstallAndStart-LoggingAgent
+
+  Install-LoggingAgent
+  Configure-LoggingAgent
+  Restart-LoggingAgent
 
   Create-DockerRegistryKey
   Configure-Dockerd

@@ -26,7 +26,7 @@ import (
 	"path"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -40,6 +40,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/mount"
 	volumepkg "k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/nestedpendingoperations"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	volumetypes "k8s.io/kubernetes/pkg/volume/util/types"
@@ -100,7 +101,7 @@ func NewReconciler(
 	populatorHasAddedPods func() bool,
 	operationExecutor operationexecutor.OperationExecutor,
 	mounter mount.Interface,
-	hostutil mount.HostUtils,
+	hostutil hostutil.HostUtils,
 	volumePluginMgr *volumepkg.VolumePluginMgr,
 	kubeletPodsDir string) Reconciler {
 	return &reconciler{
@@ -125,7 +126,6 @@ type reconciler struct {
 	kubeClient                    clientset.Interface
 	controllerAttachDetachEnabled bool
 	loopSleepDuration             time.Duration
-	syncDuration                  time.Duration
 	waitForAttachTimeout          time.Duration
 	nodeName                      types.NodeName
 	desiredStateOfWorld           cache.DesiredStateOfWorld
@@ -133,7 +133,7 @@ type reconciler struct {
 	populatorHasAddedPods         func() bool
 	operationExecutor             operationexecutor.OperationExecutor
 	mounter                       mount.Interface
-	hostutil                      mount.HostUtils
+	hostutil                      hostutil.HostUtils
 	volumePluginMgr               *volumepkg.VolumePluginMgr
 	kubeletPodsDir                string
 	timeOfLastSync                time.Time
@@ -355,7 +355,6 @@ type reconstructedVolume struct {
 	attachablePlugin    volumepkg.AttachableVolumePlugin
 	volumeGidValue      string
 	devicePath          string
-	reportedInUse       bool
 	mounter             volumepkg.Mounter
 	blockVolumeMapper   volumepkg.BlockVolumeMapper
 }
@@ -472,7 +471,7 @@ func (rc *reconciler) reconstructVolume(volume podVolume) (*reconstructedVolume,
 	}
 	// TODO: remove feature gate check after no longer needed
 	if utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) && volume.volumeMode == v1.PersistentVolumeBlock && mapperPlugin == nil {
-		return nil, fmt.Errorf("Could not find block volume plugin %q (spec.Name: %q) pod %q (UID: %q)", volume.pluginName, volume.volumeSpecName, volume.podName, pod.UID)
+		return nil, fmt.Errorf("could not find block volume plugin %q (spec.Name: %q) pod %q (UID: %q)", volume.pluginName, volume.volumeSpecName, volume.podName, pod.UID)
 	}
 
 	volumeSpec, err := rc.operationExecutor.ReconstructVolumeOperation(
@@ -545,7 +544,7 @@ func (rc *reconciler) reconstructVolume(volume podVolume) (*reconstructedVolume,
 	}
 	// If mount or symlink doesn't exist, volume reconstruction should be failed
 	if !isExist {
-		return nil, fmt.Errorf("Volume: %q is not mounted", uniqueVolumeName)
+		return nil, fmt.Errorf("volume: %q is not mounted", uniqueVolumeName)
 	}
 
 	reconstructedVolume := &reconstructedVolume{

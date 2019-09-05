@@ -40,6 +40,7 @@ import (
 	listers "k8s.io/apiextensions-apiserver/pkg/client/listers/apiextensions/internalversion"
 	"k8s.io/apiextensions-apiserver/pkg/controller/establish"
 	"k8s.io/apiextensions-apiserver/pkg/controller/finalizer"
+	"k8s.io/apiextensions-apiserver/pkg/controller/openapi/builder"
 	"k8s.io/apiextensions-apiserver/pkg/crdserverscheme"
 	apiextensionsfeatures "k8s.io/apiextensions-apiserver/pkg/features"
 	"k8s.io/apiextensions-apiserver/pkg/registry/customresource"
@@ -74,11 +75,13 @@ import (
 	genericfilters "k8s.io/apiserver/pkg/server/filters"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilopenapi "k8s.io/apiserver/pkg/util/openapi"
 	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/client-go/scale"
 	"k8s.io/client-go/scale/scheme/autoscalingv1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
+	"k8s.io/kube-openapi/pkg/util/proto"
 )
 
 // crdHandler serves the `/apis` endpoint.
@@ -117,6 +120,11 @@ type crdHandler struct {
 
 	// minRequestTimeout applies to CR's list/watch calls
 	minRequestTimeout time.Duration
+
+	// staticOpenAPISpec is used as a base for the schema of CR's for the
+	// purpose of managing fields, it is how CR handlers get the structure
+	// of TypeMeta and ObjectMeta
+	staticOpenAPISpec *spec.Swagger
 }
 
 // crdInfo stores enough information to serve the storage for the custom resource
@@ -160,7 +168,8 @@ func NewCustomResourceDefinitionHandler(
 	masterCount int,
 	authorizer authorizer.Authorizer,
 	requestTimeout time.Duration,
-	minRequestTimeout time.Duration) (*crdHandler, error) {
+	minRequestTimeout time.Duration,
+	staticOpenAPISpec *spec.Swagger) (*crdHandler, error) {
 	ret := &crdHandler{
 		versionDiscoveryHandler: versionDiscoveryHandler,
 		groupDiscoveryHandler:   groupDiscoveryHandler,
@@ -175,6 +184,7 @@ func NewCustomResourceDefinitionHandler(
 		authorizer:              authorizer,
 		requestTimeout:          requestTimeout,
 		minRequestTimeout:       minRequestTimeout,
+		staticOpenAPISpec:       staticOpenAPISpec,
 	}
 	crdInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    ret.createCustomResourceDefinition,
@@ -614,10 +624,46 @@ func (r *crdHandler) getOrCreateServingInfoFor(uid types.UID, name string) (*crd
 		if val == nil {
 			continue
 		}
-		structuralSchemas[v.Name], err = structuralschema.NewStructural(val.OpenAPIV3Schema)
+		s, err := structuralschema.NewStructural(val.OpenAPIV3Schema)
 		if *crd.Spec.PreserveUnknownFields == false && err != nil {
-			utilruntime.HandleError(err)
+			// This should never happen. If it does, it is a programming error.
+			utilruntime.HandleError(fmt.Errorf("failed to convert schema to structural: %v", err))
 			return nil, fmt.Errorf("the server could not properly serve the CR schema") // validation should avoid this
+		}
+
+		if *crd.Spec.PreserveUnknownFields == false {
+			// we don't own s completely, e.g. defaults are not deep-copied. So better make a copy here.
+			s = s.DeepCopy()
+
+			if err := structuraldefaulting.PruneDefaults(s); err != nil {
+				// This should never happen. If it does, it is a programming error.
+				utilruntime.HandleError(fmt.Errorf("failed to prune defaults: %v", err))
+				return nil, fmt.Errorf("the server could not properly serve the CR schema") // validation should avoid this
+			}
+		}
+		structuralSchemas[v.Name] = s
+	}
+
+	var openAPIModels proto.Models
+	if utilfeature.DefaultFeatureGate.Enabled(features.ServerSideApply) && r.staticOpenAPISpec != nil {
+		specs := []*spec.Swagger{}
+		for _, v := range crd.Spec.Versions {
+			s, err := builder.BuildSwagger(crd, v.Name, builder.Options{V2: false, StripDefaults: true, StripValueValidation: true})
+			if err != nil {
+				utilruntime.HandleError(err)
+				return nil, fmt.Errorf("the server could not properly serve the CR schema")
+			}
+			specs = append(specs, s)
+		}
+		mergedOpenAPI, err := builder.MergeSpecs(r.staticOpenAPISpec, specs...)
+		if err != nil {
+			utilruntime.HandleError(err)
+			return nil, fmt.Errorf("the server could not properly merge the CR schema")
+		}
+		openAPIModels, err = utilopenapi.ToProtoModels(mergedOpenAPI)
+		if err != nil {
+			utilruntime.HandleError(err)
+			return nil, fmt.Errorf("the server could not properly serve the CR schema")
 		}
 	}
 
@@ -786,12 +832,17 @@ func (r *crdHandler) getOrCreateServingInfoFor(uid types.UID, name string) (*crd
 		}
 		if utilfeature.DefaultFeatureGate.Enabled(features.ServerSideApply) {
 			reqScope := *requestScopes[v.Name]
-			reqScope.FieldManager = fieldmanager.NewCRDFieldManager(
+			reqScope.FieldManager, err = fieldmanager.NewCRDFieldManager(
+				openAPIModels,
 				reqScope.Convertor,
 				reqScope.Defaulter,
 				reqScope.Kind.GroupVersion(),
 				reqScope.HubGroupVersion,
+				*crd.Spec.PreserveUnknownFields,
 			)
+			if err != nil {
+				return nil, err
+			}
 			requestScopes[v.Name] = &reqScope
 		}
 
@@ -808,6 +859,8 @@ func (r *crdHandler) getOrCreateServingInfoFor(uid types.UID, name string) (*crd
 			SelfLinkPathPrefix: selfLinkPrefix,
 			SelfLinkPathSuffix: "/scale",
 		}
+		// TODO(issues.k8s.io/82046): We can't effectively track ownership on scale requests yet.
+		scaleScope.FieldManager = nil
 		scaleScopes[v.Name] = &scaleScope
 
 		// override status subresource values
@@ -1007,6 +1060,7 @@ func (t crdConversionRESTOptionsGetter) GetRESTOptions(resource schema.GroupReso
 		d := schemaCoercingDecoder{delegate: ret.StorageConfig.Codec, validator: unstructuredSchemaCoercer{
 			// drop invalid fields while decoding old CRs (before we haven't had any ObjectMeta validation)
 			dropInvalidMetadata:   true,
+			repairGeneration:      true,
 			structuralSchemas:     t.structuralSchemas,
 			structuralSchemaGK:    t.structuralSchemaGK,
 			preserveUnknownFields: t.preserveUnknownFields,
@@ -1107,6 +1161,7 @@ func (v schemaCoercingConverter) ConvertFieldLabel(gvk schema.GroupVersionKind, 
 // - generic pruning of unknown fields following a structural schema.
 type unstructuredSchemaCoercer struct {
 	dropInvalidMetadata bool
+	repairGeneration    bool
 
 	structuralSchemas     map[string]*structuralschema.Structural
 	structuralSchemaGK    schema.GroupKind
@@ -1140,6 +1195,10 @@ func (v *unstructuredSchemaCoercer) apply(u *unstructured.Unstructured) error {
 		}
 		if err := schemaobjectmeta.Coerce(nil, u.Object, v.structuralSchemas[gv.Version], false, v.dropInvalidMetadata); err != nil {
 			return err
+		}
+		// fixup missing generation in very old CRs
+		if v.repairGeneration && objectMeta.Generation == 0 {
+			objectMeta.Generation = 1
 		}
 	}
 

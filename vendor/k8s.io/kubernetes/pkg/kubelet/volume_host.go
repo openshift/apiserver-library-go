@@ -44,6 +44,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
 	execmnt "k8s.io/kubernetes/pkg/volume/util/exec"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 )
 
@@ -97,7 +98,7 @@ func NewInitializedVolumePluginMgr(
 
 	if err := kvh.volumePluginMgr.InitPlugins(plugins, prober, kvh); err != nil {
 		return nil, fmt.Errorf(
-			"Could not initialize volume plugins for KubeletVolumePluginMgr: %v",
+			"could not initialize volume plugins for KubeletVolumePluginMgr: %v",
 			err)
 	}
 
@@ -160,7 +161,7 @@ func (kvh *kubeletVolumeHost) GetSubpather() subpath.Interface {
 	return kvh.kubelet.subpather
 }
 
-func (kvh *kubeletVolumeHost) GetHostUtil() mount.HostUtils {
+func (kvh *kubeletVolumeHost) GetHostUtil() hostutil.HostUtils {
 	return kvh.kubelet.hostutil
 }
 

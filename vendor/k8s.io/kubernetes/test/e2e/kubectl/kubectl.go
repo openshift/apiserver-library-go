@@ -41,10 +41,13 @@ import (
 
 	"github.com/elazarl/goproxy"
 	openapi_v2 "github.com/googleapis/gnostic/OpenAPIv2"
+	uexec "k8s.io/utils/exec"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/yaml"
 
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,8 +72,6 @@ import (
 	"k8s.io/kubernetes/test/e2e/scheduling"
 	testutils "k8s.io/kubernetes/test/utils"
 	"k8s.io/kubernetes/test/utils/crd"
-	uexec "k8s.io/utils/exec"
-	"sigs.k8s.io/yaml"
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
@@ -133,7 +134,7 @@ func cleanupKubectlInputs(fileContents string, ns string, selectors ...string) {
 }
 
 func readTestFileOrDie(file string) []byte {
-	return testfiles.ReadOrDie(path.Join(kubeCtlManifestPath, file), ginkgo.Fail)
+	return testfiles.ReadOrDie(path.Join(kubeCtlManifestPath, file))
 }
 
 func runKubectlRetryOrDie(args ...string) string {
@@ -165,7 +166,7 @@ var _ = SIGDescribe("Kubectl alpha client", func() {
 		ns = f.Namespace.Name
 	})
 
-	framework.KubeDescribe("Kubectl run CronJob", func() {
+	ginkgo.Describe("Kubectl run CronJob", func() {
 		var nsFlag string
 		var cjName string
 
@@ -271,12 +272,12 @@ var _ = SIGDescribe("Kubectl client", func() {
 		e2elog.Logf("scanned %s for discovery docs: %v", home, err)
 	}
 
-	framework.KubeDescribe("Update Demo", func() {
+	ginkgo.Describe("Update Demo", func() {
 		var nautilus, kitten string
 		ginkgo.BeforeEach(func() {
 			updateDemoRoot := "test/fixtures/doc-yaml/user-guide/update-demo"
-			nautilus = commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(updateDemoRoot, "nautilus-rc.yaml.in"), ginkgo.Fail)))
-			kitten = commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(updateDemoRoot, "kitten-rc.yaml.in"), ginkgo.Fail)))
+			nautilus = commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(updateDemoRoot, "nautilus-rc.yaml.in"))))
+			kitten = commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(updateDemoRoot, "kitten-rc.yaml.in"))))
 		})
 		/*
 			Release : v1.9
@@ -329,7 +330,7 @@ var _ = SIGDescribe("Kubectl client", func() {
 		})
 	})
 
-	framework.KubeDescribe("Guestbook application", func() {
+	ginkgo.Describe("Guestbook application", func() {
 		forEachGBFile := func(run func(s string)) {
 			guestbookRoot := "test/e2e/testing-manifests/guestbook"
 			for _, gbAppFile := range []string{
@@ -340,7 +341,7 @@ var _ = SIGDescribe("Kubectl client", func() {
 				"redis-master-deployment.yaml.in",
 				"redis-slave-deployment.yaml.in",
 			} {
-				contents := commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(guestbookRoot, gbAppFile), ginkgo.Fail)))
+				contents := commonutils.SubstituteImageName(string(testfiles.ReadOrDie(filepath.Join(guestbookRoot, gbAppFile))))
 				run(contents)
 			}
 		}
@@ -365,7 +366,7 @@ var _ = SIGDescribe("Kubectl client", func() {
 		})
 	})
 
-	framework.KubeDescribe("Simple pod", func() {
+	ginkgo.Describe("Simple pod", func() {
 		var podYaml string
 		ginkgo.BeforeEach(func() {
 			ginkgo.By(fmt.Sprintf("creating the pod from %v", podYaml))
@@ -746,7 +747,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl api-versions", func() {
+	ginkgo.Describe("Kubectl api-versions", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, check version v1
@@ -761,7 +762,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl get componentstatuses", func() {
+	ginkgo.Describe("Kubectl get componentstatuses", func() {
 		ginkgo.It("should get componentstatuses", func() {
 			ginkgo.By("getting list of componentstatuses")
 			output := framework.RunKubectlOrDie("get", "componentstatuses", "-o", "jsonpath={.items[*].metadata.name}")
@@ -774,7 +775,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl apply", func() {
+	ginkgo.Describe("Kubectl apply", func() {
 		ginkgo.It("should apply a new configuration to an existing RC", func() {
 			controllerJSON := commonutils.SubstituteImageName(string(readTestFileOrDie(redisControllerFilename)))
 
@@ -906,7 +907,7 @@ metadata:
 		return nil
 	}
 
-	framework.KubeDescribe("Kubectl client-side validation", func() {
+	ginkgo.Describe("Kubectl client-side validation", func() {
 		ginkgo.It("should create/apply a CR with unknown fields for CRD with no validation schema", func() {
 			ginkgo.By("create CRD with no validation schema")
 			crd, err := crd.CreateTestCRD(f)
@@ -927,12 +928,14 @@ metadata:
 
 		ginkgo.It("should create/apply a valid CR for CRD with validation schema", func() {
 			ginkgo.By("prepare CRD with validation schema")
-			crd, err := crd.CreateTestCRD(f, func(crd *v1beta1.CustomResourceDefinition) {
-				props := &v1beta1.JSONSchemaProps{}
+			crd, err := crd.CreateTestCRD(f, func(crd *apiextensionsv1.CustomResourceDefinition) {
+				props := &apiextensionsv1.JSONSchemaProps{}
 				if err := yaml.Unmarshal(schemaFoo, props); err != nil {
 					e2elog.Failf("failed to unmarshal schema: %v", err)
 				}
-				crd.Spec.Validation = &v1beta1.CustomResourceValidation{OpenAPIV3Schema: props}
+				for i := range crd.Spec.Versions {
+					crd.Spec.Versions[i].Schema = &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: props}
+				}
 			})
 			if err != nil {
 				e2elog.Failf("failed to create test CRD: %v", err)
@@ -951,12 +954,16 @@ metadata:
 
 		ginkgo.It("should create/apply a valid CR with arbitrary-extra properties for CRD with partially-specified validation schema", func() {
 			ginkgo.By("prepare CRD with partially-specified validation schema")
-			crd, err := crd.CreateTestCRD(f, func(crd *v1beta1.CustomResourceDefinition) {
-				props := &v1beta1.JSONSchemaProps{}
+			crd, err := crd.CreateTestCRD(f, func(crd *apiextensionsv1.CustomResourceDefinition) {
+				props := &apiextensionsv1.JSONSchemaProps{}
 				if err := yaml.Unmarshal(schemaFoo, props); err != nil {
 					e2elog.Failf("failed to unmarshal schema: %v", err)
 				}
-				crd.Spec.Validation = &v1beta1.CustomResourceValidation{OpenAPIV3Schema: props}
+				// Allow for arbitrary-extra properties.
+				props.XPreserveUnknownFields = pointer.BoolPtr(true)
+				for i := range crd.Spec.Versions {
+					crd.Spec.Versions[i].Schema = &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: props}
+				}
 			})
 			if err != nil {
 				e2elog.Failf("failed to create test CRD: %v", err)
@@ -966,34 +973,17 @@ metadata:
 			ginkgo.By("sleep for 10s to wait for potential crd openapi publishing alpha feature")
 			time.Sleep(10 * time.Second)
 
-			publishedSchema := schemaForGVK(schema.GroupVersionKind{Group: crd.Crd.Spec.Group, Version: crd.Crd.Spec.Version, Kind: crd.Crd.Spec.Names.Kind})
-			expectSuccess := false
-			if publishedSchema == nil || publishedSchema.Properties == nil || publishedSchema.Properties.AdditionalProperties == nil || len(publishedSchema.Properties.AdditionalProperties) == 0 {
-				// expect success in the following cases:
-				// - no schema was published
-				// - a schema was published with no properties
-				expectSuccess = true
-				e2elog.Logf("no schema with properties found, expect apply with extra properties to succeed")
-			} else {
-				e2elog.Logf("schema with properties found, expect apply with extra properties to fail")
-			}
+			schema := schemaForGVK(schema.GroupVersionKind{Group: crd.Crd.Spec.Group, Version: crd.Crd.Spec.Versions[0].Name, Kind: crd.Crd.Spec.Names.Kind})
+			framework.ExpectNotEqual(schema, nil, "retrieving a schema for the crd")
 
 			meta := fmt.Sprintf(metaPattern, crd.Crd.Spec.Names.Kind, crd.Crd.Spec.Group, crd.Crd.Spec.Versions[0].Name, "test-cr")
 			validArbitraryCR := fmt.Sprintf(`{%s,"spec":{"bars":[{"name":"test-bar"}],"extraProperty":"arbitrary-value"}}`, meta)
-			if err := createApplyCustomResource(validArbitraryCR, f.Namespace.Name, "test-cr", crd); err != nil {
-				if expectSuccess {
-					e2elog.Failf("%v", err)
-				}
-			} else {
-				if !expectSuccess {
-					e2elog.Failf("expected error, got none")
-				}
-			}
+			err = createApplyCustomResource(validArbitraryCR, f.Namespace.Name, "test-cr", crd)
+			framework.ExpectNoError(err, "creating custom resource")
 		})
-
 	})
 
-	framework.KubeDescribe("Kubectl cluster-info", func() {
+	ginkgo.Describe("Kubectl cluster-info", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, cluster info
@@ -1012,14 +1002,14 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl cluster-info dump", func() {
+	ginkgo.Describe("Kubectl cluster-info dump", func() {
 		ginkgo.It("should check if cluster-info dump succeeds", func() {
 			ginkgo.By("running cluster-info dump")
 			framework.RunKubectlOrDie("cluster-info", "dump")
 		})
 	})
 
-	framework.KubeDescribe("Kubectl describe", func() {
+	ginkgo.Describe("Kubectl describe", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, describe pod or rc
@@ -1124,7 +1114,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl expose", func() {
+	ginkgo.Describe("Kubectl expose", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, create service, replication controller
@@ -1208,7 +1198,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl label", func() {
+	ginkgo.Describe("Kubectl label", func() {
 		var podYaml string
 		var nsFlag string
 		ginkgo.BeforeEach(func() {
@@ -1249,7 +1239,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl copy", func() {
+	ginkgo.Describe("Kubectl copy", func() {
 		var podYaml string
 		var nsFlag string
 		ginkgo.BeforeEach(func() {
@@ -1289,7 +1279,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl logs", func() {
+	ginkgo.Describe("Kubectl logs", func() {
 		var nsFlag string
 		podName := "logs-generator"
 		containerName := "logs-generator"
@@ -1308,7 +1298,7 @@ metadata:
 			Testname: Kubectl, logs
 			Description: When a Pod is running then it MUST generate logs.
 			Starting a Pod should have a expected log line. Also log command options MUST work as expected and described below.
-				‘kubectl log -tail=1’ should generate a output of one line, the last line in the log.
+				‘kubectl logs -tail=1’ should generate a output of one line, the last line in the log.
 				‘kubectl --limit-bytes=1’ should generate a single byte output.
 				‘kubectl --tail=1 --timestamp should generate one line with timestamp in RFC3339 format
 				‘kubectl --since=1s’ should output logs that are only 1 second older from now
@@ -1331,17 +1321,17 @@ metadata:
 			framework.ExpectNoError(err)
 
 			ginkgo.By("limiting log lines")
-			out := framework.RunKubectlOrDie("log", podName, containerName, nsFlag, "--tail=1")
+			out := framework.RunKubectlOrDie("logs", podName, containerName, nsFlag, "--tail=1")
 			gomega.Expect(len(out)).NotTo(gomega.BeZero())
 			framework.ExpectEqual(len(lines(out)), 1)
 
 			ginkgo.By("limiting log bytes")
-			out = framework.RunKubectlOrDie("log", podName, containerName, nsFlag, "--limit-bytes=1")
+			out = framework.RunKubectlOrDie("logs", podName, containerName, nsFlag, "--limit-bytes=1")
 			framework.ExpectEqual(len(lines(out)), 1)
 			framework.ExpectEqual(len(out), 1)
 
 			ginkgo.By("exposing timestamps")
-			out = framework.RunKubectlOrDie("log", podName, containerName, nsFlag, "--tail=1", "--timestamps")
+			out = framework.RunKubectlOrDie("logs", podName, containerName, nsFlag, "--tail=1", "--timestamps")
 			l := lines(out)
 			framework.ExpectEqual(len(l), 1)
 			words := strings.Split(l[0], " ")
@@ -1357,15 +1347,15 @@ metadata:
 			// because the granularity is only 1 second and
 			// it could end up rounding the wrong way.
 			time.Sleep(2500 * time.Millisecond) // ensure that startup logs on the node are seen as older than 1s
-			recentOut := framework.RunKubectlOrDie("log", podName, containerName, nsFlag, "--since=1s")
+			recentOut := framework.RunKubectlOrDie("logs", podName, containerName, nsFlag, "--since=1s")
 			recent := len(strings.Split(recentOut, "\n"))
-			olderOut := framework.RunKubectlOrDie("log", podName, containerName, nsFlag, "--since=24h")
+			olderOut := framework.RunKubectlOrDie("logs", podName, containerName, nsFlag, "--since=24h")
 			older := len(strings.Split(olderOut, "\n"))
 			gomega.Expect(recent).To(gomega.BeNumerically("<", older), "expected recent(%v) to be less than older(%v)\nrecent lines:\n%v\nolder lines:\n%v\n", recent, older, recentOut, olderOut)
 		})
 	})
 
-	framework.KubeDescribe("Kubectl patch", func() {
+	ginkgo.Describe("Kubectl patch", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, patch to annotate
@@ -1399,7 +1389,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl version", func() {
+	ginkgo.Describe("Kubectl version", func() {
 		/*
 			Release : v1.9
 			Testname: Kubectl, version
@@ -1416,7 +1406,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run default", func() {
+	ginkgo.Describe("Kubectl run default", func() {
 		var nsFlag string
 		var name string
 
@@ -1454,7 +1444,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run rc", func() {
+	ginkgo.Describe("Kubectl run rc", func() {
 		var nsFlag string
 		var rcName string
 
@@ -1513,7 +1503,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl rolling-update", func() {
+	ginkgo.Describe("Kubectl rolling-update", func() {
 		var nsFlag string
 		var rcName string
 		var c clientset.Interface
@@ -1555,7 +1545,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run deployment", func() {
+	ginkgo.Describe("Kubectl run deployment", func() {
 		var nsFlag string
 		var dName string
 
@@ -1610,7 +1600,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run job", func() {
+	ginkgo.Describe("Kubectl run job", func() {
 		var nsFlag string
 		var jobName string
 
@@ -1646,7 +1636,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run CronJob", func() {
+	ginkgo.Describe("Kubectl run CronJob", func() {
 		var nsFlag string
 		var cjName string
 
@@ -1683,7 +1673,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run pod", func() {
+	ginkgo.Describe("Kubectl run pod", func() {
 		var nsFlag string
 		var podName string
 
@@ -1719,7 +1709,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl replace", func() {
+	ginkgo.Describe("Kubectl replace", func() {
 		var nsFlag string
 		var podName string
 
@@ -1770,7 +1760,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl run --rm job", func() {
+	ginkgo.Describe("Kubectl run --rm job", func() {
 		jobName := "e2e-test-rm-busybox-job"
 
 		/*
@@ -1801,7 +1791,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Proxy server", func() {
+	ginkgo.Describe("Proxy server", func() {
 		// TODO: test proxy options (static, prefix, etc)
 		/*
 			Release : v1.9
@@ -1864,7 +1854,7 @@ metadata:
 
 	// This test must run [Serial] because it modifies the node so it doesn't allow pods to execute on
 	// it, which will affect anything else running in parallel.
-	framework.KubeDescribe("Kubectl taint [Serial]", func() {
+	ginkgo.Describe("Kubectl taint [Serial]", func() {
 		ginkgo.It("should update the taint on a node", func() {
 			testTaint := v1.Taint{
 				Key:    fmt.Sprintf("kubernetes.io/e2e-taint-key-001-%s", string(uuid.NewUUID())),
@@ -1964,7 +1954,7 @@ metadata:
 		})
 	})
 
-	framework.KubeDescribe("Kubectl create quota", func() {
+	ginkgo.Describe("Kubectl create quota", func() {
 		ginkgo.It("should create a quota without scopes", func() {
 			nsFlag := fmt.Sprintf("--namespace=%v", ns)
 			quotaName := "million"

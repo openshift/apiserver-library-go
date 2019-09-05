@@ -117,6 +117,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/selinux"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/csi"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 	utilexec "k8s.io/utils/exec"
@@ -254,7 +255,7 @@ type Dependencies struct {
 	OnHeartbeatFailure      func()
 	KubeClient              clientset.Interface
 	Mounter                 mount.Interface
-	HostUtil                mount.HostUtils
+	HostUtil                hostutil.HostUtils
 	OOMAdjuster             *oom.OOMAdjuster
 	OSInterface             kubecontainer.OSInterface
 	PodConfig               *config.PodConfig
@@ -1105,7 +1106,7 @@ type Kubelet struct {
 	mounter mount.Interface
 
 	// hostutil to interact with filesystems
-	hostutil mount.HostUtils
+	hostutil hostutil.HostUtils
 
 	// subpather to execute subpath actions
 	subpather subpath.Interface
@@ -2189,15 +2190,16 @@ func (kl *Kubelet) updateRuntimeUp() {
 		// Set nil if the container runtime network is ready.
 		kl.runtimeState.setNetworkState(nil)
 	}
-	// TODO(random-liu): Add runtime error in runtimeState, and update it
-	// when runtime is not ready, so that the information in RuntimeReady
-	// condition will be propagated to NodeReady condition.
+	// information in RuntimeReady condition will be propagated to NodeReady condition.
 	runtimeReady := s.GetRuntimeCondition(kubecontainer.RuntimeReady)
 	// If RuntimeReady is not set or is false, report an error.
 	if runtimeReady == nil || !runtimeReady.Status {
-		klog.Errorf("Container runtime not ready: %v", runtimeReady)
+		err := fmt.Errorf("Container runtime not ready: %v", runtimeReady)
+		klog.Error(err)
+		kl.runtimeState.setRuntimeState(err)
 		return
 	}
+	kl.runtimeState.setRuntimeState(nil)
 	kl.oneTimeInitializer.Do(kl.initializeRuntimeDependentModules)
 	kl.runtimeState.setRuntimeSync(kl.clock.Now())
 }

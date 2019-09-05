@@ -1,5 +1,5 @@
-hash: 5bf9d387d4cd230a53eac7120965e72b5065668b65e0516a1ed70544cd5ebbc1
-updated: 2019-08-29T17:02:25.5963+02:00
+hash: 68080a99749338de4930c3881c2859739bf2ad1d524636bd255b19dedd938022
+updated: 2019-09-05T11:56:51.712063+02:00
 imports:
 - name: github.com/davecgh/go-spew
   version: 8991bc29aa16c548c550c7ff78260e27b9ab7c73
@@ -13,7 +13,7 @@ imports:
   - proto
   - sortkeys
 - name: github.com/golang/protobuf
-  version: aa810b61a9c79d51363740d207bb46cf8e620ed5
+  version: b5d812f8a3706043e23a9cd5babf2e5423744d30
   subpackages:
   - proto
   - ptypes
@@ -37,7 +37,7 @@ imports:
   - compiler
   - extensions
 - name: github.com/hashicorp/golang-lru
-  version: 20f1fb78b0740ba8c3cb143a61e86ba5c8669768
+  version: 7087cb70de9f7a8bc0a10c375cb0d2280a8edf9c
   subpackages:
   - simplelru
 - name: github.com/imdario/mergo
@@ -49,7 +49,7 @@ imports:
 - name: github.com/modern-go/reflect2
   version: 94122c33edd36123c84d5368cfb2b69df93a0ec8
 - name: github.com/openshift/api
-  version: 58aab2885e38fd7f4fd57f2615f5f9fe38039e22
+  version: 4fde93ba1d71fae9af02a228c5289b744da9c032
   subpackages:
   - apps/v1
   - authorization/v1
@@ -124,7 +124,7 @@ imports:
 - name: gopkg.in/yaml.v2
   version: 51d6538a90f86fe93ac480b35f37b2be17fef232
 - name: k8s.io/api
-  version: 6185379c914ac524c99740fc4be563ad68f31b20
+  version: bacad065d7c32c51666e1f8feb94c50504b19fb4
   subpackages:
   - admissionregistration/v1
   - admissionregistration/v1beta1
@@ -146,6 +146,7 @@ imports:
   - coordination/v1
   - coordination/v1beta1
   - core/v1
+  - discovery/v1alpha1
   - events/v1beta1
   - extensions/v1beta1
   - networking/v1
@@ -164,7 +165,7 @@ imports:
   - storage/v1alpha1
   - storage/v1beta1
 - name: k8s.io/apimachinery
-  version: 31b1e1ea64dcd6d47a3b0066ccacf721f864d295
+  version: 93cd198ca677b0e97b9f205a027831ac68fb302b
   subpackages:
   - pkg/api/errors
   - pkg/api/meta
@@ -209,7 +210,7 @@ imports:
   - third_party/forked/golang/json
   - third_party/forked/golang/reflect
 - name: k8s.io/client-go
-  version: 0a74433fb22231a88db9119f88ac494411c3594e
+  version: 1592ba1f99b87471cd11167eb850f386bbae3e5a
   subpackages:
   - discovery
   - discovery/fake
@@ -245,7 +246,7 @@ imports:
 - name: k8s.io/klog
   version: 3ca30a56d8a775276f9cdae009ba326fdc05af7f
 - name: k8s.io/kube-openapi
-  version: 33be087ad058f99c78e067996202b60230737e49
+  version: 743ec37842bffe49dd4221d9026f30fb1d5adbc4
   subpackages:
   - pkg/util/proto
 - name: k8s.io/utils

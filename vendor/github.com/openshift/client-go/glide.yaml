@@ -7,13 +7,13 @@ import:
   repo:    https://github.com/openshift/kubernetes-code-generator.git
   version: client-go-4.3-kubernetes-1.16.0-beta.1
 - package: k8s.io/apimachinery
-  version: kubernetes-1.16.0-beta.1
+  version: kubernetes-1.16.0-beta.2
 - package: k8s.io/api
-  version: kubernetes-1.16.0-beta.1
+  version: kubernetes-1.16.0-beta.2
 - package: k8s.io/client-go
-  version: kubernetes-1.16.0-beta.1
+  version: kubernetes-1.16.0-beta.2
 - package: github.com/openshift/api
-  version: master
+  version: prebase-1.16
 - package: github.com/spf13/pflag
 # for gengo
 - package: golang.org/x/tools/imports

@@ -145,6 +145,125 @@ func TestApplyAlsoCreates(t *testing.T) {
 	}
 }
 
+// TestNoOpUpdateSameResourceVersion makes sure that PUT requests which change nothing
+// will not change the resource version (no write to etcd is done)
+func TestNoOpUpdateSameResourceVersion(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ServerSideApply, true)()
+
+	_, client, closeFn := setup(t)
+	defer closeFn()
+
+	podName := "no-op"
+	podResource := "pods"
+	podBytes := []byte(`{
+		"apiVersion": "v1",
+		"kind": "Pod",
+		"metadata": {
+			"name": "` + podName + `",
+			"labels": {
+				"a": "one",
+				"c": "two",
+				"b": "three"
+			}
+		},
+		"spec": {
+			"containers": [{
+				"name":  "test-container-a",
+				"image": "test-image-one"
+			},{
+				"name":  "test-container-c",
+				"image": "test-image-two"
+			},{
+				"name":  "test-container-b",
+				"image": "test-image-three"
+			}]
+		}
+	}`)
+
+	o, err := client.CoreV1().RESTClient().Patch(types.ApplyPatchType).
+		Namespace("default").
+		Param("fieldManager", "apply_test").
+		Resource(podResource).
+		Name(podName).
+		Body(podBytes).
+		Do().
+		Get()
+	if err != nil {
+		t.Fatalf("Failed to create object: %v", err)
+	}
+
+	// Need to update once for some reason
+	// TODO (#82042): Remove this update once possible
+	b, err := json.MarshalIndent(o, "\t", "\t")
+	if err != nil {
+		t.Fatalf("Failed to marshal created object: %v", err)
+	}
+	_, err = client.CoreV1().RESTClient().Put().
+		Namespace("default").
+		Resource(podResource).
+		Name(podName).
+		Body(b).
+		Do().
+		Get()
+	if err != nil {
+		t.Fatalf("Failed to apply first no-op update: %v", err)
+	}
+
+	// Sleep for one second to make sure that the times of each update operation is different.
+	time.Sleep(1 * time.Second)
+
+	createdObject, err := client.CoreV1().RESTClient().Get().Namespace("default").Resource(podResource).Name(podName).Do().Get()
+	if err != nil {
+		t.Fatalf("Failed to retrieve created object: %v", err)
+	}
+
+	createdAccessor, err := meta.Accessor(createdObject)
+	if err != nil {
+		t.Fatalf("Failed to get meta accessor for created object: %v", err)
+	}
+
+	createdBytes, err := json.MarshalIndent(createdObject, "\t", "\t")
+	if err != nil {
+		t.Fatalf("Failed to marshal created object: %v", err)
+	}
+
+	// Test that we can put the same object and don't change the RV
+	_, err = client.CoreV1().RESTClient().Put().
+		Namespace("default").
+		Resource(podResource).
+		Name(podName).
+		Body(createdBytes).
+		Do().
+		Get()
+	if err != nil {
+		t.Fatalf("Failed to apply no-op update: %v", err)
+	}
+
+	updatedObject, err := client.CoreV1().RESTClient().Get().Namespace("default").Resource(podResource).Name(podName).Do().Get()
+	if err != nil {
+		t.Fatalf("Failed to retrieve updated object: %v", err)
+	}
+
+	updatedAccessor, err := meta.Accessor(updatedObject)
+	if err != nil {
+		t.Fatalf("Failed to get meta accessor for updated object: %v", err)
+	}
+
+	updatedBytes, err := json.MarshalIndent(updatedObject, "\t", "\t")
+	if err != nil {
+		t.Fatalf("Failed to marshal updated object: %v", err)
+	}
+
+	if createdAccessor.GetResourceVersion() != updatedAccessor.GetResourceVersion() {
+		t.Fatalf("Expected same resource version to be %v but got: %v\nold object:\n%v\nnew object:\n%v",
+			createdAccessor.GetResourceVersion(),
+			updatedAccessor.GetResourceVersion(),
+			string(createdBytes),
+			string(updatedBytes),
+		)
+	}
+}
+
 // TestCreateOnApplyFailsWithUID makes sure that PATCH requests with the apply content type
 // will not create the object if it doesn't already exist and it specifies a UID
 func TestCreateOnApplyFailsWithUID(t *testing.T) {
@@ -267,6 +386,81 @@ func TestApplyUpdateApplyConflictForced(t *testing.T) {
 	}
 }
 
+// TestUpdateApplyConflict tests that applying to an object, which wasn't created by apply, will give conflicts
+func TestUpdateApplyConflict(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ServerSideApply, true)()
+
+	_, client, closeFn := setup(t)
+	defer closeFn()
+
+	obj := []byte(`{
+		"apiVersion": "apps/v1",
+		"kind": "Deployment",
+		"metadata": {
+			"name": "deployment",
+			"labels": {"app": "nginx"}
+		},
+		"spec": {
+                        "replicas": 3,
+                        "selector": {
+                                "matchLabels": {
+                                         "app": "nginx"
+                                }
+                        },
+                        "template": {
+                                "metadata": {
+                                        "labels": {
+                                                "app": "nginx"
+                                        }
+                                },
+                                "spec": {
+				        "containers": [{
+					        "name":  "nginx",
+					        "image": "nginx:latest"
+				        }]
+                                }
+                        }
+		}
+	}`)
+
+	_, err := client.CoreV1().RESTClient().Post().
+		AbsPath("/apis/apps/v1").
+		Namespace("default").
+		Resource("deployments").
+		Body(obj).Do().Get()
+	if err != nil {
+		t.Fatalf("Failed to create object using post: %v", err)
+	}
+
+	obj = []byte(`{
+		"apiVersion": "apps/v1",
+		"kind": "Deployment",
+		"metadata": {
+			"name": "deployment",
+		},
+		"spec": {
+			"replicas": 101,
+		}
+	}`)
+	_, err = client.CoreV1().RESTClient().Patch(types.ApplyPatchType).
+		AbsPath("/apis/apps/v1").
+		Namespace("default").
+		Resource("deployments").
+		Name("deployment").
+		Param("fieldManager", "apply_test").
+		Body([]byte(obj)).Do().Get()
+	if err == nil {
+		t.Fatalf("Expecting to get conflicts when applying object")
+	}
+	status, ok := err.(*errors.StatusError)
+	if !ok {
+		t.Fatalf("Expecting to get conflicts as API error")
+	}
+	if len(status.Status().Details.Causes) < 1 {
+		t.Fatalf("Expecting to get at least one conflict when applying object, got: %v", status.Status().Details.Causes)
+	}
+}
+
 // TestApplyManagedFields makes sure that managedFields api does not change
 func TestApplyManagedFields(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ServerSideApply, true)()
@@ -298,6 +492,21 @@ func TestApplyManagedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create object using Apply patch: %v", err)
 	}
+
+	_, err = client.CoreV1().RESTClient().Patch(types.MergePatchType).
+		Namespace("default").
+		Resource("configmaps").
+		Name("test-cm").
+		Param("fieldManager", "updater").
+		Body([]byte(`{"data":{"new-key": "value"}}`)).Do().Get()
+	if err != nil {
+		t.Fatalf("Failed to patch object: %v", err)
+	}
+
+	// Sleep for one second to make sure that the times of each update operation is different.
+	// This will let us check that update entries with the same manager name are grouped together,
+	// and that the most recent update time is recorded in the grouped entry.
+	time.Sleep(1 * time.Second)
 
 	_, err = client.CoreV1().RESTClient().Patch(types.MergePatchType).
 		Namespace("default").
@@ -340,7 +549,9 @@ func TestApplyManagedFields(t *testing.T) {
 					"manager": "apply_test",
 					"operation": "Apply",
 					"apiVersion": "v1",
-					"fields": {
+					"time": "` + accessor.GetManagedFields()[0].Time.UTC().Format(time.RFC3339) + `",
+					"fieldsType": "FieldsV1",
+					"fieldsV1": {
 						"f:metadata": {
 							"f:labels": {
 								"f:test-label": {}
@@ -353,21 +564,28 @@ func TestApplyManagedFields(t *testing.T) {
 					"operation": "Update",
 					"apiVersion": "v1",
 					"time": "` + accessor.GetManagedFields()[1].Time.UTC().Format(time.RFC3339) + `",
-					"fields": {
+					"fieldsType": "FieldsV1",
+					"fieldsV1": {
 						"f:data": {
-							"f:key": {}
+							"f:key": {},
+							"f:new-key": {}
 						}
 					}
 				}
 			]
 		},
 		"data": {
-			"key": "new value"
+			"key": "new value",
+			"new-key": "value"
 		}
 	}`)
 
 	if string(expected) != string(actual) {
 		t.Fatalf("Expected:\n%v\nGot:\n%v", string(expected), string(actual))
+	}
+
+	if accessor.GetManagedFields()[0].Time.UTC().Format(time.RFC3339) == accessor.GetManagedFields()[1].Time.UTC().Format(time.RFC3339) {
+		t.Fatalf("Expected times to be different but got:\n%v", string(actual))
 	}
 }
 
@@ -562,7 +780,7 @@ func TestApplyRemoveContainerPort(t *testing.T) {
 	}
 
 	if len(deployment.Spec.Template.Spec.Containers[0].Ports) > 0 {
-		t.Fatalf("Expected no container ports but got: %v", deployment.Spec.Template.Spec.Containers[0].Ports)
+		t.Fatalf("Expected no container ports but got: %v, object: \n%#v", deployment.Spec.Template.Spec.Containers[0].Ports, deployment)
 	}
 }
 
@@ -682,7 +900,7 @@ func TestApplyConvertsManagedFieldsVersion(t *testing.T) {
 					"manager": "sidecar_controller",
 					"operation": "Apply",
 					"apiVersion": "extensions/v1beta1",
-					"fields": {
+					"fieldsV1": {
 						"f:metadata": {
 							"f:labels": {
 								"f:sidecar_version": {}
@@ -796,7 +1014,8 @@ func TestApplyConvertsManagedFieldsVersion(t *testing.T) {
 		Operation:  metav1.ManagedFieldsOperationApply,
 		APIVersion: "apps/v1",
 		Time:       actual.Time,
-		Fields: &metav1.Fields{
+		FieldsType: "FieldsV1",
+		FieldsV1: &metav1.FieldsV1{
 			Raw: []byte(`{"f:metadata":{"f:labels":{"f:sidecar_version":{}}},"f:spec":{"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"sidecar\"}":{".":{},"f:image":{},"f:name":{}}}}}}}`),
 		},
 	}
@@ -1056,7 +1275,6 @@ var podBytes = []byte(`
 apiVersion: v1
 kind: Pod
 metadata:
-  creationTimestamp: "2019-07-08T09:31:18Z"
   labels:
     app: some-app
     plugin1: some-value
@@ -1072,8 +1290,6 @@ metadata:
     kind: ReplicaSet
     name: some-name
     uid: 0a9d2b9e-779e-11e7-b422-42010a8001be
-  selfLink: /api/v1/namespaces/pah
-  uid: 23e8f548-a163-11e9-abe4-42010a80026b
 spec:
   containers:
   - args:
@@ -1207,22 +1423,27 @@ func BenchmarkNoServerSideApply(b *testing.B) {
 }
 
 func getPodSizeWhenEnabled(b *testing.B, pod v1.Pod) int {
+	return len(getPodBytesWhenEnabled(b, pod, "application/vnd.kubernetes.protobuf"))
+}
+
+func getPodBytesWhenEnabled(b *testing.B, pod v1.Pod, format string) []byte {
 	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, genericfeatures.ServerSideApply, true)()
 	_, client, closeFn := setup(b)
 	defer closeFn()
 	flag.Lookup("v").Value.Set("0")
 
 	pod.Name = "size-pod"
-	podB, err := client.CoreV1().RESTClient().Post().
+	podB, err := client.CoreV1().RESTClient().Patch(types.ApplyPatchType).
+		Name(pod.Name).
 		Namespace("default").
+		Param("fieldManager", "apply_test").
 		Resource("pods").
-		SetHeader("Content-Type", "application/yaml").
-		SetHeader("Accept", "application/vnd.kubernetes.protobuf").
+		SetHeader("Accept", format).
 		Body(encodePod(pod)).DoRaw()
 	if err != nil {
-		b.Fatalf("Failed to create object: %v", err)
+		b.Fatalf("Failed to create object: %#v", err)
 	}
-	return len(podB)
+	return podB
 }
 
 func BenchmarkNoServerSideApplyButSameSize(b *testing.B) {
@@ -1263,16 +1484,24 @@ func BenchmarkNoServerSideApplyButSameSize(b *testing.B) {
 }
 
 func BenchmarkServerSideApply(b *testing.B) {
+	podBytesWhenEnabled := getPodBytesWhenEnabled(b, decodePod(podBytes), "application/yaml")
+
 	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, genericfeatures.ServerSideApply, true)()
 
 	_, client, closeFn := setup(b)
 	defer closeFn()
 	flag.Lookup("v").Value.Set("0")
 
-	benchAll(b, client, decodePod(podBytes))
+	benchAll(b, client, decodePod(podBytesWhenEnabled))
 }
 
 func benchAll(b *testing.B, client kubernetes.Interface, pod v1.Pod) {
+	// Make sure pod is ready to post
+	pod.ObjectMeta.CreationTimestamp = metav1.Time{}
+	pod.ObjectMeta.ResourceVersion = ""
+	pod.ObjectMeta.UID = ""
+	pod.ObjectMeta.SelfLink = ""
+
 	// Create pod for repeated-updates
 	pod.Name = "repeated-pod"
 	_, err := client.CoreV1().RESTClient().Post().
