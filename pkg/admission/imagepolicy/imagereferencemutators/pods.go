@@ -20,18 +20,6 @@ import (
 	"k8s.io/kubernetes/pkg/apis/core"
 )
 
-// GetPodSpecReferenceMutator returns a mutator for the provided object, or an error if no
-// such mutator is defined.
-func GetPodSpecReferenceMutator(obj runtime.Object) (PodSpecReferenceMutator, error) {
-	if spec, path, err := GetPodSpec(obj); err == nil {
-		return NewPodSpecMutator(spec, nil, path), nil
-	}
-	if spec, path, err := GetPodSpecV1(obj); err == nil {
-		return NewPodSpecV1Mutator(spec, nil, path), nil
-	}
-	return nil, errNoImageMutator
-}
-
 var errNoPodSpec = fmt.Errorf("No PodSpec available for this object")
 
 // GetPodSpec returns a mutable pod spec out of the provided object, including a field path
@@ -226,16 +214,18 @@ func (m containerV1Mutator) SetImage(image string) { m.Image = image }
 
 // podSpecMutator implements the mutation interface over objects with a pod spec.
 type podSpecMutator struct {
-	spec    *core.PodSpec
-	oldSpec *core.PodSpec
-	path    *field.Path
+	spec                     *core.PodSpec
+	oldSpec                  *core.PodSpec
+	path                     *field.Path
+	resolveAnnotationChanged bool
 }
 
-func NewPodSpecMutator(spec *core.PodSpec, oldSpec *core.PodSpec, path *field.Path) *podSpecMutator {
+func NewPodSpecMutator(spec *core.PodSpec, oldSpec *core.PodSpec, path *field.Path, resolveAnnotationChanged bool) *podSpecMutator {
 	return &podSpecMutator{
-		spec:    spec,
-		oldSpec: oldSpec,
-		path:    path,
+		spec:                     spec,
+		oldSpec:                  oldSpec,
+		path:                     path,
+		resolveAnnotationChanged: resolveAnnotationChanged,
 	}
 }
 
@@ -266,7 +256,7 @@ func (m *podSpecMutator) Mutate(fn ImageReferenceMutateFunc) field.ErrorList {
 	var errs field.ErrorList
 	for i := range m.spec.InitContainers {
 		container := &m.spec.InitContainers[i]
-		if hasIdenticalPodSpecImage(m.oldSpec, container.Name, container.Image) {
+		if !m.resolveAnnotationChanged && hasIdenticalPodSpecImage(m.oldSpec, container.Name, container.Image) {
 			continue
 		}
 		ref := core.ObjectReference{Kind: "DockerImage", Name: container.Image}
@@ -282,7 +272,7 @@ func (m *podSpecMutator) Mutate(fn ImageReferenceMutateFunc) field.ErrorList {
 	}
 	for i := range m.spec.Containers {
 		container := &m.spec.Containers[i]
-		if hasIdenticalPodSpecImage(m.oldSpec, container.Name, container.Image) {
+		if !m.resolveAnnotationChanged && hasIdenticalPodSpecImage(m.oldSpec, container.Name, container.Image) {
 			continue
 		}
 		ref := core.ObjectReference{Kind: "DockerImage", Name: container.Image}
@@ -333,19 +323,21 @@ func (m *podSpecMutator) GetContainerByIndex(init bool, i int) (ContainerMutator
 	return containerMutator{container}, true
 }
 
-func NewPodSpecV1Mutator(spec *corev1.PodSpec, oldSpec *corev1.PodSpec, path *field.Path) *podSpecV1Mutator {
+func NewPodSpecV1Mutator(spec *corev1.PodSpec, oldSpec *corev1.PodSpec, path *field.Path, resolveAnnotationChanged bool) *podSpecV1Mutator {
 	return &podSpecV1Mutator{
-		spec:    spec,
-		oldSpec: oldSpec,
-		path:    path,
+		spec:                     spec,
+		oldSpec:                  oldSpec,
+		path:                     path,
+		resolveAnnotationChanged: resolveAnnotationChanged,
 	}
 }
 
 // podSpecV1Mutator implements the mutation interface over objects with a pod spec.
 type podSpecV1Mutator struct {
-	spec    *corev1.PodSpec
-	oldSpec *corev1.PodSpec
-	path    *field.Path
+	spec                     *corev1.PodSpec
+	oldSpec                  *corev1.PodSpec
+	path                     *field.Path
+	resolveAnnotationChanged bool
 }
 
 func (m *podSpecV1Mutator) GetPath() *field.Path {
@@ -375,7 +367,7 @@ func (m *podSpecV1Mutator) Mutate(fn ImageReferenceMutateFunc) field.ErrorList {
 	var errs field.ErrorList
 	for i := range m.spec.InitContainers {
 		container := &m.spec.InitContainers[i]
-		if hasIdenticalPodSpecV1Image(m.oldSpec, container.Name, container.Image) {
+		if !m.resolveAnnotationChanged && hasIdenticalPodSpecV1Image(m.oldSpec, container.Name, container.Image) {
 			continue
 		}
 		ref := core.ObjectReference{Kind: "DockerImage", Name: container.Image}
@@ -391,7 +383,7 @@ func (m *podSpecV1Mutator) Mutate(fn ImageReferenceMutateFunc) field.ErrorList {
 	}
 	for i := range m.spec.Containers {
 		container := &m.spec.Containers[i]
-		if hasIdenticalPodSpecV1Image(m.oldSpec, container.Name, container.Image) {
+		if !m.resolveAnnotationChanged && hasIdenticalPodSpecV1Image(m.oldSpec, container.Name, container.Image) {
 			continue
 		}
 		ref := core.ObjectReference{Kind: "DockerImage", Name: container.Image}
