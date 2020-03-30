@@ -4,10 +4,10 @@ go 1.13
 
 require (
 	github.com/hashicorp/golang-lru v0.5.1
-	github.com/openshift/api master
+	github.com/openshift/api v0.0.0-20200327145400-6efe1ee417e1
 	github.com/openshift/build-machinery-go v0.0.0-20200211121458-5e3d6e570160
-	github.com/openshift/client-go master
-	github.com/openshift/library-go master
+	github.com/openshift/client-go v0.0.0-20200326155132-2a6cd50aedd0
+	github.com/openshift/library-go v0.0.0-20200327125526-163b2f0d6264
 	go.uber.org/atomic v1.3.3-0.20181018215023-8dc6146f7569 // indirect
 	go.uber.org/multierr v1.1.1-0.20180122172545-ddea229ff1df // indirect
 	k8s.io/api v0.18.0
