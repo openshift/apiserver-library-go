@@ -152,7 +152,7 @@ func TestValidate(t *testing.T) {
 		if err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
-		errs := s.Validate(nil, v.groups)
+		errs := s.Validate(nil, nil, v.groups)
 		if v.pass && len(errs) > 0 {
 			t.Errorf("unexpected errors for %s: %v", k, errs)
 		}

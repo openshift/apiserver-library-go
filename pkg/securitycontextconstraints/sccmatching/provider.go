@@ -215,8 +215,8 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 	if fsGroup := sc.FSGroup(); fsGroup != nil {
 		fsGroups = append(fsGroups, *fsGroup)
 	}
-	allErrs = append(allErrs, s.fsGroupStrategy.Validate(pod, fsGroups)...)
-	allErrs = append(allErrs, s.supplementalGroupStrategy.Validate(pod, sc.SupplementalGroups())...)
+	allErrs = append(allErrs, s.fsGroupStrategy.Validate(fldPath, pod, fsGroups)...)
+	allErrs = append(allErrs, s.supplementalGroupStrategy.Validate(fldPath, pod, sc.SupplementalGroups())...)
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
 
 	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, nil, sc.SELinuxOptions())...)
