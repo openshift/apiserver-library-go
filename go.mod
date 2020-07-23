@@ -14,7 +14,7 @@ require (
 	k8s.io/apiserver v0.19.0-rc.2
 	k8s.io/client-go v0.19.0-rc.2
 	k8s.io/code-generator v0.19.0-rc.2
-	k8s.io/klog v1.0.0
+	k8s.io/klog/v2 v2.2.0
 	k8s.io/kubernetes v1.19.0-rc.2
 )
 
