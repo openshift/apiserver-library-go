@@ -327,7 +327,7 @@ func TestValidateAdds(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		errs := strategy.Validate(nil, nil, v.containerCaps)
+		errs := strategy.Validate(nil, nil, nil, v.containerCaps)
 		if v.shouldPass && len(errs) > 0 {
 			t.Errorf("%s should have passed but had errors %v", k, errs)
 			continue
@@ -384,7 +384,7 @@ func TestValidateDrops(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		errs := strategy.Validate(nil, nil, v.containerCaps)
+		errs := strategy.Validate(nil, nil, nil, v.containerCaps)
 		if v.shouldPass && len(errs) > 0 {
 			t.Errorf("%s should have passed but had errors %v", k, errs)
 			continue
