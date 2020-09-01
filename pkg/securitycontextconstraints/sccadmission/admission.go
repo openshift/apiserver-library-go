@@ -172,6 +172,9 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 
 	providers, errs := sccmatching.CreateProvidersFromConstraints(a.GetNamespace(), constraints, c.client)
 	logProviders(pod, providers, errs)
+	if len(errs) > 0 {
+		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("error resolving scc provider: %v", errs))
+	}
 
 	if len(providers) == 0 {
 		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraintsProvider available to validate pod request"))
