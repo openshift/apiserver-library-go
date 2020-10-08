@@ -31,7 +31,7 @@ github.com/go-openapi/jsonreference
 github.com/go-openapi/spec
 # github.com/go-openapi/swag v0.19.5
 github.com/go-openapi/swag
-# github.com/gogo/protobuf v1.2.2-0.20190723190241-65acae22fc9d
+# github.com/gogo/protobuf v1.3.1
 github.com/gogo/protobuf/gogoproto
 github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/protoc-gen-gogo/descriptor
@@ -48,7 +48,7 @@ github.com/google/go-cmp/cmp/internal/diff
 github.com/google/go-cmp/cmp/internal/flags
 github.com/google/go-cmp/cmp/internal/function
 github.com/google/go-cmp/cmp/internal/value
-# github.com/google/gofuzz v1.0.0
+# github.com/google/gofuzz v1.1.0
 github.com/google/gofuzz
 # github.com/google/uuid v1.1.1
 github.com/google/uuid
@@ -79,7 +79,7 @@ github.com/modern-go/reflect2
 github.com/munnerz/goautoneg
 # github.com/opencontainers/go-digest v1.0.0-rc1
 github.com/opencontainers/go-digest
-# github.com/openshift/api v0.0.0-20200116145750-0e2ff1e215dd
+# github.com/openshift/api v0.0.0-20200210091934-a0e53e94816b
 github.com/openshift/api/config/v1
 github.com/openshift/api/image
 github.com/openshift/api/image/docker10
@@ -89,6 +89,15 @@ github.com/openshift/api/oauth/v1
 github.com/openshift/api/quota/v1
 github.com/openshift/api/security
 github.com/openshift/api/security/v1
+# github.com/openshift/build-machinery-go v0.0.0-20200211121458-5e3d6e570160
+github.com/openshift/build-machinery-go
+github.com/openshift/build-machinery-go/make
+github.com/openshift/build-machinery-go/make/lib
+github.com/openshift/build-machinery-go/make/targets
+github.com/openshift/build-machinery-go/make/targets/golang
+github.com/openshift/build-machinery-go/make/targets/openshift
+github.com/openshift/build-machinery-go/make/targets/openshift/operator
+github.com/openshift/build-machinery-go/scripts
 # github.com/openshift/client-go v0.0.0-20200116152001-92a2713fa240
 github.com/openshift/client-go/image/clientset/versioned
 github.com/openshift/client-go/image/clientset/versioned/fake
@@ -109,15 +118,7 @@ github.com/openshift/client-go/security/clientset/versioned/typed/security/v1
 github.com/openshift/client-go/security/informers/externalversions/internalinterfaces
 github.com/openshift/client-go/security/informers/externalversions/security/v1
 github.com/openshift/client-go/security/listers/security/v1
-# github.com/openshift/library-go v0.0.0-20200120084036-bb27e57e2f2b
-github.com/openshift/library-go/alpha-build-machinery
-github.com/openshift/library-go/alpha-build-machinery/make
-github.com/openshift/library-go/alpha-build-machinery/make/lib
-github.com/openshift/library-go/alpha-build-machinery/make/targets
-github.com/openshift/library-go/alpha-build-machinery/make/targets/golang
-github.com/openshift/library-go/alpha-build-machinery/make/targets/openshift
-github.com/openshift/library-go/alpha-build-machinery/make/targets/openshift/operator
-github.com/openshift/library-go/alpha-build-machinery/scripts
+# github.com/openshift/library-go v0.0.0-20200921144613-67f7770bf823
 github.com/openshift/library-go/pkg/apiserver/admission/admissionrestconfig
 github.com/openshift/library-go/pkg/authorization/scopemetadata
 github.com/openshift/library-go/pkg/image/imageutil
@@ -179,7 +180,7 @@ golang.org/x/crypto/ed25519
 golang.org/x/crypto/ed25519/internal/edwards25519
 golang.org/x/crypto/pbkdf2
 golang.org/x/crypto/ssh/terminal
-# golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553
+# golang.org/x/net v0.0.0-20200202094626-16171245cfb2
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
 golang.org/x/net/http/httpguts
@@ -289,7 +290,7 @@ gopkg.in/square/go-jose.v2/json
 gopkg.in/square/go-jose.v2/jwt
 # gopkg.in/yaml.v2 v2.2.4
 gopkg.in/yaml.v2
-# k8s.io/api v0.17.1 => k8s.io/api v0.17.1
+# k8s.io/api v0.17.2 => k8s.io/api v0.17.1
 k8s.io/api/admission/v1
 k8s.io/api/admission/v1beta1
 k8s.io/api/admissionregistration/v1
@@ -334,7 +335,7 @@ k8s.io/api/storage/v1alpha1
 k8s.io/api/storage/v1beta1
 # k8s.io/apiextensions-apiserver v0.17.1 => k8s.io/apiextensions-apiserver v0.17.1
 k8s.io/apiextensions-apiserver/pkg/features
-# k8s.io/apimachinery v0.17.1 => k8s.io/apimachinery v0.17.1
+# k8s.io/apimachinery v0.17.2 => k8s.io/apimachinery v0.17.1
 k8s.io/apimachinery/pkg/api/equality
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/api/meta
