@@ -1,6 +1,7 @@
 package sort
 
 import (
+	"math/rand"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -260,5 +261,75 @@ func TestCapabilitiesPointValue(t *testing.T) {
 		if actualPoints != v.expectedPoints {
 			t.Errorf("%s expected %d capability score but got %d", k, v.expectedPoints, actualPoints)
 		}
+	}
+}
+
+func TestMoreRestrictiveReason(t *testing.T) {
+	orderedSubScorers := []struct {
+		message      string
+		nonZeroScore func() points
+	}{
+		{"forbids privileged", func() points { return privilegedPoints }},
+		{"forbids host ports", func() points { return hostPortsPoints }},
+		{"forbids host networking", func() points { return hostNetworkPoints }},
+		{"forbids host volume mounts", func() points { return hostVolumePoints }},
+		{"forbids non-trivial volume mounts", func() points { return nonTrivialVolumePoints }},
+		{"permits less runAsUser strategies", func() points {
+			switch rand.Intn(4) {
+			case 0:
+				return runAsAnyUserPoints
+			case 1:
+				return runAsNonRootPoints
+			case 2:
+				return runAsRangePoints
+			default:
+				return runAsUserPoints
+			}
+		}},
+		{"permits less capabilities", func() points {
+			return points(1 + rand.Intn(9999))
+		}},
+	}
+
+	nonZeroScore := func(i, j int) points {
+		var p points
+		for x := i; x < j; x++ {
+			if rand.Intn(2) == 1 {
+				p += orderedSubScorers[x].nonZeroScore()
+			}
+		}
+		return p
+	}
+
+	for i, s := range orderedSubScorers {
+		t.Run(s.message, func(t *testing.T) {
+			for n := 0; n < 1000; n++ {
+				above := nonZeroScore(0, i)
+
+				a := s.nonZeroScore()
+				b := s.nonZeroScore()
+				if a > b {
+					a, b = b, a
+				}
+
+				below1 := nonZeroScore(i+1, len(orderedSubScorers))
+				below2 := nonZeroScore(i+1, len(orderedSubScorers))
+				if below1 > below2 {
+					below1, below2 = below2, below1
+				}
+
+				p, q := above+below1, above+a+below2
+				if got, expected := moreRestrictiveReason(p, q), s.message; got != expected {
+					t.Errorf("for %d < %d got %q, expected %q", p, q, got, expected)
+				}
+
+				if a < b {
+					p, q := above+a+below1, above+b+below2
+					if got, expected := moreRestrictiveReason(p, q), s.message; got != expected {
+						t.Errorf("for %d < %d got %q, expected %q", p, q, got, expected)
+					}
+				}
+			}
+		})
 	}
 }
