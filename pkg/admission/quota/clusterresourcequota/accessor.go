@@ -14,6 +14,7 @@ import (
 	utilquota "k8s.io/apiserver/pkg/quota/v1"
 	etcd "k8s.io/apiserver/pkg/storage/etcd3"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/util/retry"
 
 	quotav1 "github.com/openshift/api/quota/v1"
 	quotatypedclient "github.com/openshift/client-go/quota/clientset/versioned/typed/quota/v1"
@@ -60,6 +61,12 @@ func newQuotaAccessor(
 // UpdateQuotaStatus the newQuota coming in will be incremented from the original.  The difference between the original
 // and the new is the amount to add to the namespace total, but the total status is the used value itself
 func (e *clusterQuotaAccessor) UpdateQuotaStatus(newQuota *corev1.ResourceQuota) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		return e.updateQuotaStatus(newQuota)
+	})
+}
+
+func (e *clusterQuotaAccessor) updateQuotaStatus(newQuota *corev1.ResourceQuota) error {
 	clusterQuota, err := e.clusterQuotaLister.Get(newQuota.Name)
 	if err != nil {
 		return err
