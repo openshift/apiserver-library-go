@@ -220,7 +220,7 @@ loop:
 			// this will cause every security context constraint attempted, in order, to the failure
 			validationErrs = append(validationErrs,
 				field.Forbidden(
-					field.NewPath(fmt.Sprintf("provider %q: ", provider.GetSCCName())),
+					field.NewPath(fmt.Sprintf("provider %q", provider.GetSCCName())),
 					"not usable by user or serviceaccount",
 				),
 			)
