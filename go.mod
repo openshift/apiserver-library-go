@@ -1,6 +1,6 @@
 module github.com/openshift/apiserver-library-go
 
-go 1.13
+go 1.15
 
 require (
 	github.com/hashicorp/golang-lru v0.5.1
