@@ -222,7 +222,7 @@ func (a *ImagePolicyPlugin) admit(ctx context.Context, attr admission.Attributes
 		}
 	}
 
-	if err := accept(a.accepter, policy, a.resolver, m, annotations, attr, excluded); err != nil {
+	if err := accept(a.accepter, policy, a.resolver, m, annotations, attr, excluded, mutationAllowed); err != nil {
 		return err
 	}
 
