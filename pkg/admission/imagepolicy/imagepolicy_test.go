@@ -445,6 +445,28 @@ func TestAdmissionResolution(t *testing.T) {
 		t.Errorf("unexpected image: %#v", pod)
 	}
 
+	// skip resolution for objects with controller owner references
+	hasController := true
+	pod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{{Controller: &hasController}}
+	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+	pod.ObjectMeta.OwnerReferences = nil
+
+	// working resolution
 	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
 		t.Logf("object: %#v", attrs.GetObject())
 		t.Fatal(err)
