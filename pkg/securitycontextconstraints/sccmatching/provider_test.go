@@ -535,6 +535,27 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		},
 	}
 
+	boundTokenVolumePod := defaultPod()
+	boundTokenVolumePod.Spec.Volumes = []api.Volume{
+		{
+			Name: "projected-volume",
+			VolumeSource: api.VolumeSource{
+				Projected: &api.ProjectedVolumeSource{
+					Sources: []api.VolumeProjection{
+						{
+							ServiceAccountToken: &api.ServiceAccountTokenProjection{
+								Path:              "token",
+								ExpirationSeconds: 3600,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	allowSecretVolumesSCC := defaultSCC()
+	allowSecretVolumesSCC.Volumes = []securityv1.FSType{securityv1.FSTypeSecret}
+
 	sysctlAllowAllSCC := defaultSCC()
 	sysctlAllowAllSCC.ForbiddenSysctls = []string{}
 	sysctlAllowAllSCC.AllowedUnsafeSysctls = []string{"*"}
@@ -614,6 +635,10 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		"flex volume driver with empty whitelist (only flex volumes volumes are allowed)": {
 			pod: flexVolumePod,
 			scc: allowFlexVolumesSCC(true, false),
+		},
+		"pass bound service account token volume with secret in whitelist": {
+			pod: boundTokenVolumePod,
+			scc: allowSecretVolumesSCC,
 		},
 		"pass sysctl specific profile with safe kernel sysctl": {
 			pod: safeSysctlKernelPod,
