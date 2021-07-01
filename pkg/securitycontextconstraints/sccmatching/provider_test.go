@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	securityv1 "github.com/openshift/api/security/v1"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
 	corev1 "k8s.io/api/core/v1"
@@ -1004,6 +1006,115 @@ func TestValidateAllowedVolumes(t *testing.T) {
 	}
 }
 
+func TestValidateProjectedVolume(t *testing.T) {
+	pod := defaultPod()
+	scc := defaultSCC()
+	provider, err := NewSimpleProvider(scc)
+	require.NoError(t, err, "error creating provider")
+
+	tests := []struct {
+		desc                  string
+		allowedFSTypes        []securityv1.FSType
+		projectedVolumeSource *api.ProjectedVolumeSource
+		wantAllow             bool
+	}{
+		{
+			desc:                  "deny if secret is not allowed",
+			allowedFSTypes:        []securityv1.FSType{securityv1.FSTypeEmptyDir},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().ToVolumeSource(),
+			wantAllow:             false,
+		},
+		{
+			desc:           "deny if the projected volume has volume source other than the ones in projected volume injected by service account token admission plugin",
+			allowedFSTypes: []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: &api.ProjectedVolumeSource{
+				Sources: []api.VolumeProjection{
+					{
+						ConfigMap: &api.ConfigMapProjection{
+							LocalObjectReference: api.LocalObjectReference{
+								Name: "foo-ca.crt",
+							},
+							Items: []api.KeyToPath{
+								{
+									Key:  "ca.crt",
+									Path: "ca.crt",
+								},
+							},
+						},
+					},
+				}},
+			wantAllow: false,
+		},
+		{
+			desc:                  "allow if secret is allowed and the projected volume sources equals to the ones injected by service account admission plugin",
+			allowedFSTypes:        []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().ToVolumeSource(),
+			wantAllow:             true,
+		},
+		{
+			desc:                  "deny if the SA has a slightly different path",
+			allowedFSTypes:        []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().WithSA("notAToken").ToVolumeSource(),
+			wantAllow:             false,
+		},
+		{
+			desc:           "deny if there's an unknown CM",
+			allowedFSTypes: []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().
+				WithCM("random-key",
+					"unknown-local-reference",
+					api.KeyToPath{
+						Key:  "ca.crt",
+						Path: "ca.crt",
+					}).ToVolumeSource(),
+			wantAllow: false,
+		},
+		{
+			desc:           "deny if the kube-root-ca has wrong paths",
+			allowedFSTypes: []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().
+				WithKubeRootCA("openshift-service-ca.crt", api.KeyToPath{
+					Key:  "allow-all.crt",
+					Path: "ca.crt",
+				}).ToVolumeSource(),
+			wantAllow: false,
+		},
+		{
+			desc:           "deny if the openshift-ca has wrong paths",
+			allowedFSTypes: []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().
+				WithOpenShiftServiceCA("openshift-service-ca.crt", api.KeyToPath{
+					Key:  "malicious.crt",
+					Path: "service-ca.crt",
+				}).ToVolumeSource(),
+			wantAllow: false,
+		},
+		{
+			desc:           "deny if the downward API sets an unknown fieldPath",
+			allowedFSTypes: []securityv1.FSType{securityv1.FSTypeSecret},
+			projectedVolumeSource: newProjectedVolumeCreator().FullValid().
+				WithDownwardAPI("namespace", &api.ObjectFieldSelector{
+					APIVersion: "v1",
+					FieldPath:  "spec.serviceAccount",
+				}).ToVolumeSource(),
+			wantAllow: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			pod.Spec.Volumes = []api.Volume{{VolumeSource: api.VolumeSource{Projected: test.projectedVolumeSource}}}
+			scc.Volumes = test.allowedFSTypes
+			errs := provider.ValidatePodSecurityContext(pod, field.NewPath(""))
+			if test.wantAllow {
+				require.Empty(t, errs, "projected volumes are allowed if secret volumes is allowed and BoundServiceAccountTokenVolume is enabled")
+			} else {
+				require.Greaterf(t, len(errs), 0, "expected errors but got none")
+				require.Contains(t, errs.ToAggregate().Error(), "projected volumes are not allowed to be used", "did not find the expected error")
+			}
+		})
+	}
+}
+
 // TestValidateAllowPrivilegeEscalation will test that when the SecurityContextConstraints
 // AllowPrivilegeEscalation is false we cannot set a container's securityContext
 // to allowPrivilegeEscalation, but when it is true we can.
@@ -1059,4 +1170,87 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("resetting allowing privilege escalation expected no errors but got %v", errs)
 	}
+}
+
+type projectedVolumeCreator struct {
+	volumes map[string]api.VolumeProjection
+}
+
+func newProjectedVolumeCreator() *projectedVolumeCreator {
+	return &projectedVolumeCreator{
+		volumes: map[string]api.VolumeProjection{},
+	}
+}
+
+func (p *projectedVolumeCreator) FullValid() *projectedVolumeCreator {
+	return p.WithSA("token").
+		WithKubeRootCA("kube-root-ca.crt", api.KeyToPath{
+			Key:  "ca.crt",
+			Path: "ca.crt",
+		}).
+		WithOpenShiftServiceCA("openshift-service-ca.crt", api.KeyToPath{
+			Key:  "service-ca.crt",
+			Path: "service-ca.crt",
+		}).
+		WithDownwardAPI("namespace", &api.ObjectFieldSelector{
+			APIVersion: "v1",
+			FieldPath:  "metadata.namespace",
+		})
+}
+
+func (p *projectedVolumeCreator) ToVolumeSource() *api.ProjectedVolumeSource {
+	ret := &api.ProjectedVolumeSource{
+		Sources: []api.VolumeProjection{},
+	}
+
+	for _, v := range p.volumes {
+		ret.Sources = append(ret.Sources, v)
+	}
+
+	return ret
+}
+
+func (p *projectedVolumeCreator) WithSA(path string) *projectedVolumeCreator {
+	p.volumes["sa"] = api.VolumeProjection{
+		ServiceAccountToken: &api.ServiceAccountTokenProjection{
+			Path:              path,
+			ExpirationSeconds: 3607,
+		},
+	}
+	return p
+}
+
+func (p *projectedVolumeCreator) WithOpenShiftServiceCA(refName string, paths ...api.KeyToPath) *projectedVolumeCreator {
+	return p.WithCM("openshift-service-ca", refName, paths...)
+}
+
+func (p *projectedVolumeCreator) WithKubeRootCA(refName string, paths ...api.KeyToPath) *projectedVolumeCreator {
+	return p.WithCM("kube-root-ca", refName, paths...)
+}
+
+func (p *projectedVolumeCreator) WithCM(key, refName string, paths ...api.KeyToPath) *projectedVolumeCreator {
+	p.volumes[key] = api.VolumeProjection{
+		ConfigMap: &api.ConfigMapProjection{
+			LocalObjectReference: api.LocalObjectReference{
+				Name: refName,
+			},
+			Items: paths,
+		},
+	}
+
+	return p
+}
+
+func (p *projectedVolumeCreator) WithDownwardAPI(path string, fieldRef *api.ObjectFieldSelector) *projectedVolumeCreator {
+	p.volumes["downward-api"] = api.VolumeProjection{
+		DownwardAPI: &api.DownwardAPIProjection{
+			Items: []api.DownwardAPIVolumeFile{
+				{
+					Path:     path,
+					FieldRef: fieldRef,
+				},
+			},
+		},
+	}
+	return p
 }
