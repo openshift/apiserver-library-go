@@ -3,6 +3,7 @@ package imagepolicy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -354,7 +355,7 @@ func TestAdmissionResolution(t *testing.T) {
 	p.SetImageMutators(imagereferencemutators.KubeImageMutators{})
 	setDefaultCache(p)
 
-	p.resolver = resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
+	resolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
 		error) {
 		switch ref.Name {
 		case "index.docker.io/mysql:latest":
@@ -372,6 +373,12 @@ func TestAdmissionResolution(t *testing.T) {
 		t.Fatalf("unexpected call to resolve image: %v", ref)
 		return nil, nil
 	})
+	nonWorkingResolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
+		error) {
+		return nil, fmt.Errorf("could not resolve %v", ref.Name)
+	})
+
+	p.resolver = resolver
 
 	if err != nil {
 		t.Fatal(err)
@@ -415,6 +422,51 @@ func TestAdmissionResolution(t *testing.T) {
 		"default", "pod1", schema.GroupVersionResource{Version: "v1", Resource: "pods"},
 		"", admission.Create, nil, false, nil,
 	)
+
+	// when Admit fails to resolve but suddenly the resolver starts working in Validate
+	// - do not change the image in validate to be consistent and atomic with Admit
+	// - this allows creation of objects like imagestreams in between admit and validate
+	p.resolver = nonWorkingResolver
+	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+	p.resolver = resolver
+	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+
+	// skip resolution for objects with controller owner references
+	hasController := true
+	pod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{{Controller: &hasController}}
+	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
+		t.Logf("object: %#v", attrs.GetObject())
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+		t.Errorf("unexpected image: %#v", pod)
+	}
+	pod.ObjectMeta.OwnerReferences = nil
+
+	// working resolution
 	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
 		t.Logf("object: %#v", attrs.GetObject())
 		t.Fatal(err)
@@ -430,14 +482,6 @@ func TestAdmissionResolution(t *testing.T) {
 	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" ||
 		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" {
 		t.Errorf("unexpected image: %#v", pod)
-	}
-
-	// Simulate a later admission plugin modifying the pod spec back to something that requires resolution
-	pod.Spec.Containers[0].Image = "myregistry.com/mysql/mysql:latest"
-	if err := p.Validate(context.TODO(), attrs, nil); err == nil {
-		t.Fatal("expected validate error on mutation, got none")
-	} else if !strings.Contains(err.Error(), "changed after admission") {
-		t.Fatalf("expected mutation-related error, got %v", err)
 	}
 }
 
