@@ -266,15 +266,16 @@ func TestCapabilitiesPointValue(t *testing.T) {
 
 func TestMoreRestrictiveReason(t *testing.T) {
 	orderedSubScorers := []struct {
-		message      string
-		nonZeroScore func() points
+		test            string
+		expectedMessage string
+		nonZeroScore    func() points
 	}{
-		{"forbids privileged", func() points { return privilegedPoints }},
-		{"forbids host ports", func() points { return hostPortsPoints }},
-		{"forbids host networking", func() points { return hostNetworkPoints }},
-		{"forbids host volume mounts", func() points { return hostVolumePoints }},
-		{"forbids non-trivial volume mounts", func() points { return nonTrivialVolumePoints }},
-		{"permits less runAsUser strategies", func() points {
+		{"privileged", "forbids privileged", func() points { return privilegedPoints }},
+		{"host ports", "forbids host ports", func() points { return hostPortsPoints }},
+		{"host network", "forbids host networking", func() points { return hostNetworkPoints }},
+		{"host volumes", "forbids host volume mounts", func() points { return hostVolumePoints }},
+		{"non-trivial mounts", "forbids non-trivial volume mounts", func() points { return nonTrivialVolumePoints }},
+		{"selinux", "permits less runAs strategies", func() points {
 			switch rand.Intn(4) {
 			case 0:
 				return runAsAnyUserPoints
@@ -286,7 +287,19 @@ func TestMoreRestrictiveReason(t *testing.T) {
 				return runAsUserPoints
 			}
 		}},
-		{"permits less capabilities", func() points {
+		{"runasuser", "permits less runAs strategies", func() points {
+			switch rand.Intn(4) {
+			case 0:
+				return runAsAnyUserPoints
+			case 1:
+				return runAsNonRootPoints
+			case 2:
+				return runAsRangePoints
+			default:
+				return runAsUserPoints
+			}
+		}},
+		{"caps", "permits less capabilities", func() points {
 			return points(1 + rand.Intn(9999))
 		}},
 	}
@@ -302,7 +315,7 @@ func TestMoreRestrictiveReason(t *testing.T) {
 	}
 
 	for i, s := range orderedSubScorers {
-		t.Run(s.message, func(t *testing.T) {
+		t.Run(s.test, func(t *testing.T) {
 			for n := 0; n < 1000; n++ {
 				above := nonZeroScore(0, i)
 
@@ -319,13 +332,13 @@ func TestMoreRestrictiveReason(t *testing.T) {
 				}
 
 				p, q := above+below1, above+a+below2
-				if got, expected := moreRestrictiveReason(p, q), s.message; got != expected {
+				if got, expected := moreRestrictiveReason(p, q), s.expectedMessage; got != expected {
 					t.Errorf("for %d < %d got %q, expected %q", p, q, got, expected)
 				}
 
 				if a < b {
 					p, q := above+a+below1, above+b+below2
-					if got, expected := moreRestrictiveReason(p, q), s.message; got != expected {
+					if got, expected := moreRestrictiveReason(p, q), s.expectedMessage; got != expected {
 						t.Errorf("for %d < %d got %q, expected %q", p, q, got, expected)
 					}
 				}
