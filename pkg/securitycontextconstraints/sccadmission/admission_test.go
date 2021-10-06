@@ -187,6 +187,7 @@ func TestAdmitCaps(t *testing.T) {
 func testSCCAdmit(testCaseName string, sccs []*securityv1.SecurityContextConstraints, pod *coreapi.Pod, shouldPass bool, t *testing.T) {
 	t.Helper()
 	tc := setupClientSet()
+
 	lister := createSCCLister(t, sccs)
 	testAuthorizer := &sccTestAuthorizer{t: t}
 	plugin := newTestAdmission(lister, tc, testAuthorizer)
@@ -1172,6 +1173,19 @@ func restrictiveSCC() *securityv1.SecurityContextConstraints {
 	}
 }
 
+// this method does not create functional SCCs, it only creates entries with the requirednames
+func requiredSCCForNames() []*securityv1.SecurityContextConstraints {
+	ret := []*securityv1.SecurityContextConstraints{}
+	for _, name := range standardSCCNames.List() {
+		ret = append(ret, &securityv1.SecurityContextConstraints{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+		})
+	}
+	return ret
+}
+
 func saSCC() *securityv1.SecurityContextConstraints {
 	return &securityv1.SecurityContextConstraints{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1278,9 +1292,28 @@ func setupClientSet() *fake.Clientset {
 
 func createSCCListerAndIndexer(t *testing.T, sccs []*securityv1.SecurityContextConstraints) (securityv1listers.SecurityContextConstraintsLister, cache.Indexer) {
 	t.Helper()
+
+	// add the required SCC so admission runs
+	sccsForLister := []*securityv1.SecurityContextConstraints{}
+	sccsForLister = append(sccsForLister, sccs...)
+	requiredSCCs := requiredSCCForNames()
+	for i := range requiredSCCs {
+		requiredSCC := requiredSCCs[i]
+		found := false
+		for _, curr := range sccsForLister {
+			if curr.Name == requiredSCC.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			sccsForLister = append(sccsForLister, requiredSCC)
+		}
+	}
+
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	lister := securityv1listers.NewSecurityContextConstraintsLister(indexer)
-	for _, scc := range sccs {
+	for _, scc := range sccsForLister {
 		if err := indexer.Add(scc); err != nil {
 			t.Fatalf("error adding SCC to store: %v", err)
 		}
@@ -1290,6 +1323,7 @@ func createSCCListerAndIndexer(t *testing.T, sccs []*securityv1.SecurityContextC
 
 func createSCCLister(t *testing.T, sccs []*securityv1.SecurityContextConstraints) securityv1listers.SecurityContextConstraintsLister {
 	t.Helper()
+
 	lister, _ := createSCCListerAndIndexer(t, sccs)
 	return lister
 }
