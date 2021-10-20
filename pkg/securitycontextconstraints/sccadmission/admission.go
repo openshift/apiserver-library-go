@@ -388,6 +388,6 @@ func logProviders(pod *coreapi.Pod, providers []sccmatching.SecurityContextConst
 	klog.V(4).Infof("validating pod %s (generate: %s) against providers %s", pod.Name, pod.GenerateName, strings.Join(names, ","))
 
 	for _, err := range providerCreationErrs {
-		klog.V(4).Infof("provider creation error: %v", err)
+		klog.V(2).Infof("provider creation error: %v", err)
 	}
 }
