@@ -208,6 +208,7 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 		}
 		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in namespace %s", a.GetNamespace()))
 	}
+	logConstraints(pod, constraints)
 
 	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
 	// Keep the order the same for everything else
@@ -440,9 +441,17 @@ func logProviders(pod *coreapi.Pod, providers []sccmatching.SecurityContextConst
 	for i, p := range providers {
 		names[i] = p.GetSCCName()
 	}
-	klog.V(4).Infof("validating pod %s (generate: %s) against providers %s", pod.Name, pod.GenerateName, strings.Join(names, ","))
+	klog.V(2).Infof("validating pod %s (generate: %s) against providers %s", pod.Name, pod.GenerateName, strings.Join(names, ","))
 
 	for _, err := range providerCreationErrs {
-		klog.V(4).Infof("provider creation error: %v", err)
+		klog.V(2).Infof("provider creation error: %v", err)
 	}
+}
+
+func logConstraints(pod *coreapi.Pod, constraints []*securityv1.SecurityContextConstraints) {
+	names := make([]string, len(constraints))
+	for i, c := range constraints {
+		names[i] = c.GetName()
+	}
+	klog.V(2).Infof("validating pod %s (generate: %s) against constraints %s", pod.Name, pod.GenerateName, strings.Join(names, ","))
 }
