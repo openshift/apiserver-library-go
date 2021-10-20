@@ -12,6 +12,7 @@ import (
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/labels"
+	kutilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
@@ -224,6 +225,9 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 
 	providers, errs := sccmatching.CreateProvidersFromConstraints(ctx, a.GetNamespace(), constraints, c.client)
 	logProviders(pod, providers, errs)
+	if len(errs) > 0 {
+		return nil, "", nil, kutilerrors.NewAggregate(errs)
+	}
 
 	if len(providers) == 0 {
 		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraintsProvider available to validate pod request"))
