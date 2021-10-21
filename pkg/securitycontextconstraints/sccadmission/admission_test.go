@@ -167,20 +167,22 @@ func TestAdmitCaps(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		for k, v := range tc {
-			v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
+			t.Run(k, func(t *testing.T) {
+				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
 
-			testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
+				testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
 
-			containers := v.pod.Spec.Containers
-			if i == 0 {
-				containers = v.pod.Spec.InitContainers
-			}
-
-			if v.expectedCapabilities != nil {
-				if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
-					t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
+				containers := v.pod.Spec.Containers
+				if i == 0 {
+					containers = v.pod.Spec.InitContainers
 				}
-			}
+
+				if v.expectedCapabilities != nil {
+					if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
+						t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
+					}
+				}
+			})
 		}
 	}
 }
@@ -1184,6 +1186,18 @@ func requiredSCCForNames() []*securityv1.SecurityContextConstraints {
 		ret = append(ret, &securityv1.SecurityContextConstraints{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name,
+			},
+			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
+				Type: securityv1.SELinuxStrategyRunAsAny,
+			},
+			RunAsUser: securityv1.RunAsUserStrategyOptions{
+				Type: securityv1.RunAsUserStrategyRunAsAny,
+			},
+			FSGroup: securityv1.FSGroupStrategyOptions{
+				Type: securityv1.FSGroupStrategyRunAsAny,
+			},
+			SupplementalGroups: securityv1.SupplementalGroupsStrategyOptions{
+				Type: securityv1.SupplementalGroupsStrategyRunAsAny,
 			},
 		})
 	}
