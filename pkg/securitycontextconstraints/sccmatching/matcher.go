@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/klog/v2"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -17,6 +15,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 
 	"github.com/openshift/api/security"

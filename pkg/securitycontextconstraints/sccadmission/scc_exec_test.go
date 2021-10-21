@@ -3,6 +3,7 @@ package sccadmission
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,37 +89,41 @@ func TestExecAdmit(t *testing.T) {
 	}
 
 	for k, v := range testCases {
-		tc := fake.NewSimpleClientset(v.pod)
-		tc.PrependReactor("get", "pods", func(action clientgotesting.Action) (handled bool, ret runtime.Object, err error) {
-			return true, v.pod, nil
+		t.Run(k, func(t *testing.T) {
+			tc := fake.NewSimpleClientset(v.pod)
+			tc.PrependReactor("get", "pods", func(action clientgotesting.Action) (handled bool, ret runtime.Object, err error) {
+				return true, v.pod, nil
+			})
+
+			// create the admission plugin
+			p := NewSCCExecRestrictions()
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			cache := securityv1listers.NewSecurityContextConstraintsLister(indexer)
+			p.constraintAdmission.sccLister = cache
+			p.constraintAdmission.sccSynced = func() bool { return true }
+			p.SetExternalKubeClientSet(tc)
+
+			attrs := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), "namespace", "pod-name", coreapi.Resource(v.resource).WithVersion("version"), v.subresource, v.operation, nil, false, &user.DefaultInfo{})
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			err := p.Validate(ctx, attrs, nil)
+
+			if v.shouldAdmit && err != nil {
+				t.Errorf("%s: expected no errors but received %v", k, err)
+			}
+			if !v.shouldAdmit && err == nil {
+				t.Errorf("%s: expected errors but received none", k)
+			}
+
+			for _, action := range tc.Actions() {
+				t.Logf("%s: %#v", k, action)
+			}
+			if !v.shouldHaveClientAction && (len(tc.Actions()) > 0) {
+				t.Errorf("%s: unexpected actions: %v", k, tc.Actions())
+			}
+			if v.shouldHaveClientAction && (len(tc.Actions()) == 0) {
+				t.Errorf("%s: no actions found", k)
+			}
 		})
-
-		// create the admission plugin
-		p := NewSCCExecRestrictions()
-		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-		cache := securityv1listers.NewSecurityContextConstraintsLister(indexer)
-		p.constraintAdmission.sccLister = cache
-		p.constraintAdmission.sccSynced = func() bool { return true }
-		p.SetExternalKubeClientSet(tc)
-
-		attrs := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), "namespace", "pod-name", coreapi.Resource(v.resource).WithVersion("version"), v.subresource, v.operation, nil, false, &user.DefaultInfo{})
-		err := p.Validate(context.TODO(), attrs, nil)
-
-		if v.shouldAdmit && err != nil {
-			t.Errorf("%s: expected no errors but received %v", k, err)
-		}
-		if !v.shouldAdmit && err == nil {
-			t.Errorf("%s: expected errors but received none", k)
-		}
-
-		for _, action := range tc.Actions() {
-			t.Logf("%s: %#v", k, action)
-		}
-		if !v.shouldHaveClientAction && (len(tc.Actions()) > 0) {
-			t.Errorf("%s: unexpected actions: %v", k, tc.Actions())
-		}
-		if v.shouldHaveClientAction && (len(tc.Actions()) == 0) {
-			t.Errorf("%s: no actions found", k)
-		}
 	}
 }
