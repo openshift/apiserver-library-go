@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -166,20 +167,22 @@ func TestAdmitCaps(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		for k, v := range tc {
-			v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
+			t.Run(k, func(t *testing.T) {
+				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
 
-			testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
+				testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
 
-			containers := v.pod.Spec.Containers
-			if i == 0 {
-				containers = v.pod.Spec.InitContainers
-			}
-
-			if v.expectedCapabilities != nil {
-				if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
-					t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
+				containers := v.pod.Spec.Containers
+				if i == 0 {
+					containers = v.pod.Spec.InitContainers
 				}
-			}
+
+				if v.expectedCapabilities != nil {
+					if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
+						t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
+					}
+				}
+			})
 		}
 	}
 }
@@ -577,7 +580,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 				}
 			},
 			namespace:   namespaceNoUID,
-			expectedErr: "unable to find pre-allocated uid annotation",
+			expectedErr: "unable to find annotation openshift.io/sa.scc.uid-range",
 		},
 		"pre-allocated no mcs annotation": {
 			scc: func() *securityv1.SecurityContextConstraints {
@@ -600,7 +603,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 				}
 			},
 			namespace:   namespaceNoMCS,
-			expectedErr: "unable to find pre-allocated mcs annotation",
+			expectedErr: "unable to find annotation openshift.io/sa.scc.mcs",
 		},
 		"pre-allocated group falls back to UID annotation": {
 			scc: func() *securityv1.SecurityContextConstraints {
@@ -673,33 +676,36 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 	}
 
 	for k, v := range testCases {
-		// create the admission handler
-		tc := fake.NewSimpleClientset(v.namespace)
-		scc := v.scc()
+		t.Run(k, func(t *testing.T) {
+			// create the admission handler
+			tc := fake.NewSimpleClientset(v.namespace)
+			scc := v.scc()
 
-		// create the providers, this method only needs the namespace
-		attributes := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), v.namespace.Name, "", coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, nil)
-		_, errs := sccmatching.CreateProvidersFromConstraints(attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
+			// create the providers, this method only needs the namespace
+			attributes := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), v.namespace.Name, "", coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, nil)
+			// let timeout based failures fail fast
+			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+			defer cancel()
+			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
 
-		if !reflect.DeepEqual(scc, v.scc()) {
-			diff := diff.ObjectDiff(scc, v.scc())
-			t.Errorf("%s createProvidersFromConstraints mutated constraints. diff:\n%s", k, diff)
-		}
-		if len(v.expectedErr) > 0 && len(errs) != 1 {
-			t.Errorf("%s expected a single error '%s' but received %v", k, v.expectedErr, errs)
-			continue
-		}
-		if len(v.expectedErr) == 0 && len(errs) != 0 {
-			t.Errorf("%s did not expect an error but received %v", k, errs)
-			continue
-		}
-
-		// check that we got the error we expected
-		if len(v.expectedErr) > 0 {
-			if !strings.Contains(errs[0].Error(), v.expectedErr) {
-				t.Errorf("%s expected error '%s' but received %v", k, v.expectedErr, errs[0])
+			if !reflect.DeepEqual(scc, v.scc()) {
+				diff := diff.ObjectDiff(scc, v.scc())
+				t.Fatalf("%s createProvidersFromConstraints mutated constraints. diff:\n%s", k, diff)
 			}
-		}
+			if len(v.expectedErr) > 0 && len(errs) != 1 {
+				t.Fatalf("%s expected a single error '%s' but received %v", k, v.expectedErr, errs)
+			}
+			if len(v.expectedErr) == 0 && len(errs) != 0 {
+				t.Fatalf("%s did not expect an error but received %v", k, errs)
+			}
+
+			// check that we got the error we expected
+			if len(v.expectedErr) > 0 {
+				if !strings.Contains(errs[0].Error(), v.expectedErr) {
+					t.Fatalf("%s expected error '%s' but received %v", k, v.expectedErr, errs[0])
+				}
+			}
+		})
 	}
 }
 
@@ -1180,6 +1186,18 @@ func requiredSCCForNames() []*securityv1.SecurityContextConstraints {
 		ret = append(ret, &securityv1.SecurityContextConstraints{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name,
+			},
+			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
+				Type: securityv1.SELinuxStrategyRunAsAny,
+			},
+			RunAsUser: securityv1.RunAsUserStrategyOptions{
+				Type: securityv1.RunAsUserStrategyRunAsAny,
+			},
+			FSGroup: securityv1.FSGroupStrategyOptions{
+				Type: securityv1.FSGroupStrategyRunAsAny,
+			},
+			SupplementalGroups: securityv1.SupplementalGroupsStrategyOptions{
+				Type: securityv1.SupplementalGroupsStrategyRunAsAny,
 			},
 		})
 	}
