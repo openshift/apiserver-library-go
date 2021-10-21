@@ -576,7 +576,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 				}
 			},
 			namespace:   namespaceNoUID,
-			expectedErr: "unable to find pre-allocated uid annotation",
+			expectedErr: "unable to find annotation openshift.io/sa.scc.uid-range",
 		},
 		"pre-allocated no mcs annotation": {
 			scc: func() *securityv1.SecurityContextConstraints {
@@ -599,7 +599,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 				}
 			},
 			namespace:   namespaceNoMCS,
-			expectedErr: "unable to find pre-allocated mcs annotation",
+			expectedErr: "unable to find annotation openshift.io/sa.scc.mcs",
 		},
 		"pre-allocated group falls back to UID annotation": {
 			scc: func() *securityv1.SecurityContextConstraints {
@@ -672,33 +672,33 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 	}
 
 	for k, v := range testCases {
-		// create the admission handler
-		tc := fake.NewSimpleClientset(v.namespace)
-		scc := v.scc()
+		t.Run(k, func(t *testing.T) {
+			// create the admission handler
+			tc := fake.NewSimpleClientset(v.namespace)
+			scc := v.scc()
 
-		// create the providers, this method only needs the namespace
-		attributes := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), v.namespace.Name, "", coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, nil)
-		_, errs := sccmatching.CreateProvidersFromConstraints(attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
+			// create the providers, this method only needs the namespace
+			attributes := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), v.namespace.Name, "", coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, nil)
+			_, errs := sccmatching.CreateProvidersFromConstraints(attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
 
-		if !reflect.DeepEqual(scc, v.scc()) {
-			diff := diff.ObjectDiff(scc, v.scc())
-			t.Errorf("%s createProvidersFromConstraints mutated constraints. diff:\n%s", k, diff)
-		}
-		if len(v.expectedErr) > 0 && len(errs) != 1 {
-			t.Errorf("%s expected a single error '%s' but received %v", k, v.expectedErr, errs)
-			continue
-		}
-		if len(v.expectedErr) == 0 && len(errs) != 0 {
-			t.Errorf("%s did not expect an error but received %v", k, errs)
-			continue
-		}
-
-		// check that we got the error we expected
-		if len(v.expectedErr) > 0 {
-			if !strings.Contains(errs[0].Error(), v.expectedErr) {
-				t.Errorf("%s expected error '%s' but received %v", k, v.expectedErr, errs[0])
+			if !reflect.DeepEqual(scc, v.scc()) {
+				diff := diff.ObjectDiff(scc, v.scc())
+				t.Fatalf("%s createProvidersFromConstraints mutated constraints. diff:\n%s", k, diff)
 			}
-		}
+			if len(v.expectedErr) > 0 && len(errs) != 1 {
+				t.Fatalf("%s expected a single error '%s' but received %v", k, v.expectedErr, errs)
+			}
+			if len(v.expectedErr) == 0 && len(errs) != 0 {
+				t.Fatalf("%s did not expect an error but received %v", k, errs)
+			}
+
+			// check that we got the error we expected
+			if len(v.expectedErr) > 0 {
+				if !strings.Contains(errs[0].Error(), v.expectedErr) {
+					t.Fatalf("%s expected error '%s' but received %v", k, v.expectedErr, errs[0])
+				}
+			}
+		})
 	}
 }
 
