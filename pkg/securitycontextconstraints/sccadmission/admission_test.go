@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -680,7 +681,10 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 
 			// create the providers, this method only needs the namespace
 			attributes := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), v.namespace.Name, "", coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, nil)
-			_, errs := sccmatching.CreateProvidersFromConstraints(attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
+			// let timeout based failures fail fast
+			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+			defer cancel()
+			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
 
 			if !reflect.DeepEqual(scc, v.scc()) {
 				diff := diff.ObjectDiff(scc, v.scc())

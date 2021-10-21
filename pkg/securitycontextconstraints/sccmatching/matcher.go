@@ -162,7 +162,7 @@ func constraintSupportsGroup(group string, constraintGroups []string) bool {
 
 // CreateProvidersFromConstraints creates providers from the constraints supplied, including
 // looking up pre-allocated values if necessary using the pod's namespace.
-func CreateProvidersFromConstraints(namespaceName string, sccs []*securityv1.SecurityContextConstraints, client kubernetes.Interface) ([]SecurityContextConstraintsProvider, []error) {
+func CreateProvidersFromConstraints(ctx context.Context, namespaceName string, sccs []*securityv1.SecurityContextConstraints, client kubernetes.Interface) ([]SecurityContextConstraintsProvider, []error) {
 	var (
 		// namespace is declared here for reuse but we will not fetch it unless required by the matched constraints
 		namespace *corev1.Namespace
@@ -173,8 +173,8 @@ func CreateProvidersFromConstraints(namespaceName string, sccs []*securityv1.Sec
 	)
 
 	var lastErr error
-	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		namespace, lastErr = client.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
+	err := wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(ctx context.Context) (bool, error) {
+		namespace, lastErr = client.CoreV1().Namespaces().Get(ctx, namespaceName, metav1.GetOptions{})
 		if lastErr != nil {
 			return false, nil
 		}
