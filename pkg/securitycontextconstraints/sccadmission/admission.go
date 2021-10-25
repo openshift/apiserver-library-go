@@ -169,7 +169,7 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 	// get all constraints that are usable by the user
 	klog.V(4).Infof("getting security context constraints for pod %s (generate: %s) in namespace %s with user info %v", pod.Name, pod.GenerateName, a.GetNamespace(), a.GetUserInfo())
 
-	err := wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(context.Context) (bool, error) {
+	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		return c.sccSynced(), nil
 	})
 	if err != nil {
@@ -181,7 +181,7 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 	// If the SCCs were all deleted, then no pod will pass SCC admission until the SCCs are recreated, but the kas-o (which recreates them)
 	// bypasses SCC admission, so this does not create a cycle.
 	var requiredSCCErr error
-	err = wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(context.Context) (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if requiredSCCErr = requireStandardSCCs(c.sccLister.List(labels.Everything())); requiredSCCErr != nil {
 			return false, nil
 		}

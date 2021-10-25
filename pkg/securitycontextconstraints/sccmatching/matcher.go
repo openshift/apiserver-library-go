@@ -172,7 +172,7 @@ func CreateProvidersFromConstraints(ctx context.Context, namespaceName string, s
 	)
 
 	var lastErr error
-	err := wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(ctx context.Context) (bool, error) {
+	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		namespace, lastErr = client.CoreV1().Namespaces().Get(ctx, namespaceName, metav1.GetOptions{})
 		if lastErr != nil {
 			return false, nil
