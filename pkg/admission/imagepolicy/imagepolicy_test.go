@@ -1053,21 +1053,6 @@ func TestResolutionConfig(t *testing.T) {
 			resolve:  true,
 			rewrite:  false,
 		},
-		// resource match skips on statefulset update
-		// TODO: remove in 3.7
-		{
-			attrs: rules.ImagePolicyAttributes{LocalRewrite: true},
-			config: &imagepolicy.ImagePolicyConfig{
-				ResolveImages: imagepolicy.DoNotAttempt,
-				ResolutionRules: []imagepolicy.ImageResolutionPolicyRule{
-					{LocalNames: true, TargetResource: metav1.GroupResource{Group: "apps", Resource: "statefulsets"}},
-				},
-			},
-			resource: metav1.GroupResource{Group: "apps", Resource: "statefulsets"},
-			update:   true,
-			resolve:  true,
-			rewrite:  false,
-		},
 	}
 
 	for i, test := range testCases {
