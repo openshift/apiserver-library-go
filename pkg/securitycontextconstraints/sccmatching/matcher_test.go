@@ -85,21 +85,67 @@ func TestAssignSecurityContext(t *testing.T) {
 			},
 			shouldValidate: true,
 		},
+		"init containers are being checked - fail": {
+			pod: &kapi.Pod{
+				Spec: kapi.PodSpec{
+					SecurityContext: &kapi.PodSecurityContext{},
+					Containers:      []kapi.Container{createContainer(false)},
+					InitContainers:  []kapi.Container{createContainer(false), createContainer(true)},
+				},
+			},
+			shouldValidate: false,
+		},
+		"init containers are being checked - pass": {
+			pod: &kapi.Pod{
+				Spec: kapi.PodSpec{
+					SecurityContext: &kapi.PodSecurityContext{},
+					Containers:      []kapi.Container{createContainer(false)},
+					InitContainers:  []kapi.Container{createContainer(false), createContainer(false)},
+				},
+			},
+			shouldValidate: true,
+		},
+		"ephemeral containers are being checked - fail": {
+			pod: &kapi.Pod{
+				Spec: kapi.PodSpec{
+					SecurityContext: &kapi.PodSecurityContext{},
+					Containers:      []kapi.Container{createContainer(false)},
+					EphemeralContainers: []kapi.EphemeralContainer{
+						{EphemeralContainerCommon: kapi.EphemeralContainerCommon(createContainer(false))},
+						{EphemeralContainerCommon: kapi.EphemeralContainerCommon(createContainer(true))},
+					},
+				},
+			},
+			shouldValidate: false,
+		},
+		"ephemeral containers are being checked - pass": {
+			pod: &kapi.Pod{
+				Spec: kapi.PodSpec{
+					SecurityContext: &kapi.PodSecurityContext{},
+					Containers:      []kapi.Container{createContainer(false)},
+					EphemeralContainers: []kapi.EphemeralContainer{
+						{EphemeralContainerCommon: kapi.EphemeralContainerCommon(createContainer(false))},
+						{EphemeralContainerCommon: kapi.EphemeralContainerCommon(createContainer(false))},
+					},
+				},
+			},
+			shouldValidate: true,
+		},
 	}
 
 	for i := 0; i < 2; i++ {
 		for k, v := range testCases {
-			v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
+			t.Run(k, func(t *testing.T) {
+				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
 
-			errs := AssignSecurityContext(provider, v.pod, nil)
-			if v.shouldValidate && len(errs) > 0 {
-				t.Errorf("%s expected to validate but received errors %v", k, errs)
-				continue
-			}
-			if !v.shouldValidate && len(errs) == 0 {
-				t.Errorf("%s expected validation errors but received none", k)
-				continue
-			}
+				errs := AssignSecurityContext(provider, v.pod, nil)
+				if v.shouldValidate && len(errs) > 0 {
+					t.Fatalf("%s expected to validate but received errors %v", k, errs)
+				}
+				if !v.shouldValidate && len(errs) == 0 {
+					t.Fatalf("%s expected validation errors but received none", k)
+				}
+			})
 		}
 	}
 }
