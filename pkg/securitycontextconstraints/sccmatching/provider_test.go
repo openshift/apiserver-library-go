@@ -8,13 +8,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	securityv1 "github.com/openshift/api/security/v1"
-	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+
+	securityv1 "github.com/openshift/api/security/v1"
+	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
 )
 
 func TestCreatePodSecurityContextNonmutating(t *testing.T) {
@@ -227,6 +228,9 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		},
 	}
 
+	failSeccompProfilePod := defaultPod()
+	failSeccompProfilePod.Annotations = map[string]string{api.SeccompPodAnnotationKey: "foo"}
+
 	errorCases := map[string]struct {
 		pod           *api.Pod
 		scc           *securityv1.SecurityContextConstraints
@@ -285,7 +289,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failInvalidSeccompPod": {
 			pod:           failInvalidSeccompProfile,
 			scc:           failInvalidSeccompProfileSCC,
-			expectedError: "bar is not a valid seccomp profile",
+			expectedError: "Forbidden: bar is not an allowed seccomp profile. Valid values are [foo]",
 		},
 		"failHostDirSCC": {
 			pod:           failHostDirPod,
@@ -316,6 +320,11 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 			pod:           failUnsafeSysctlPod,
 			scc:           failAllUnsafeSysctlsSCC,
 			expectedError: "unsafe sysctl \"kernel.sem\" is not allowed",
+		},
+		"failInvalidSeccomp": {
+			pod:           failSeccompProfilePod,
+			scc:           defaultSCC(),
+			expectedError: "Forbidden: seccomp may not be set",
 		},
 	}
 	for k, v := range errorCases {
@@ -388,6 +397,16 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 	failInvalidSeccompProfileSCC := defaultSCC()
 	failInvalidSeccompProfileSCC.SeccompProfiles = []string{"foo"}
 
+	failSeccompPod := defaultPod()
+	failSeccompPod.Annotations = map[string]string{
+		api.SeccompContainerAnnotationKeyPrefix + failSeccompPod.Spec.Containers[0].Name: "foo",
+	}
+
+	failSeccompPodInheritPodAnnotation := defaultPod()
+	failSeccompPodInheritPodAnnotation.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
+
 	errorCases := map[string]struct {
 		pod           *api.Pod
 		scc           *securityv1.SecurityContextConstraints
@@ -436,7 +455,17 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 		"failInvalidSeccompPod": {
 			pod:           failInvalidSeccompProfile,
 			scc:           failInvalidSeccompProfileSCC,
-			expectedError: "bar is not a valid seccomp profile",
+			expectedError: "Forbidden: bar is not an allowed seccomp profile. Valid values are [foo]",
+		},
+		"failSeccompContainerAnnotation": {
+			pod:           failSeccompPod,
+			scc:           defaultSCC(),
+			expectedError: "Forbidden: seccomp may not be set",
+		},
+		"failSeccompContainerPodAnnotation": {
+			pod:           failSeccompPodInheritPodAnnotation,
+			scc:           defaultSCC(),
+			expectedError: "Forbidden: seccomp may not be set",
 		},
 	}
 
@@ -557,6 +586,14 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		},
 	}
 
+	seccompSCC := defaultSCC()
+	seccompSCC.SeccompProfiles = []string{"foo"}
+
+	seccompPod := defaultPod()
+	seccompPod.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
+
 	successCases := map[string]struct {
 		pod *api.Pod
 		scc *securityv1.SecurityContextConstraints
@@ -624,6 +661,10 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		"pass sysctl specific profile with unsafe kernel sysctl": {
 			pod: unsafeSysctlKernelPod,
 			scc: sysctlAllowAllSCC,
+		},
+		"pass seccomp validating SCC": {
+			pod: seccompPod,
+			scc: seccompSCC,
 		},
 	}
 
@@ -725,6 +766,17 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 
 	seccompFooPod := defaultPod()
 	seccompFooPod.Annotations[api.SeccompContainerAnnotationKeyPrefix+seccompFooPod.Spec.Containers[0].Name] = "foo"
+
+	seccompPod := defaultPod()
+	seccompPod.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+		api.SeccompContainerAnnotationKeyPrefix + seccompPod.Spec.Containers[0].Name: "foo",
+	}
+
+	seccompPodInherit := defaultPod()
+	seccompPodInherit.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
 
 	successCases := map[string]struct {
 		pod *api.Pod
