@@ -187,6 +187,42 @@ func TestAdmitCaps(t *testing.T) {
 	}
 }
 
+func TestShouldIgnore(t *testing.T) {
+	tests := []struct {
+		description  string
+		shouldIgnore bool
+		pod          *coreapi.Pod
+	}{
+		{
+			description:  "Windows pod should be ignored",
+			shouldIgnore: true,
+			pod:          windowsPod(),
+		},
+		{
+			description:  "Linux pod with OS field not set should not be ignored",
+			shouldIgnore: false,
+			pod:          goodPod(),
+		},
+		{
+			description:  "Linux pod with OS field explicitly set should not be ignored",
+			shouldIgnore: false,
+			pod:          linuxPod(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			attrs := admission.NewAttributesRecord(test.pod, nil, coreapi.Kind("Pod").WithVersion("version"), test.pod.Namespace, test.pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
+			ignored, err := shouldIgnore(attrs)
+			if err != nil {
+				t.Errorf("expected the test to not error but it errored with %v", err)
+			}
+			if ignored != test.shouldIgnore {
+				t.Errorf("expected outcome %v but got %v", test.shouldIgnore, ignored)
+			}
+		})
+	}
+}
+
 func testSCCAdmit(testCaseName string, sccs []*securityv1.SecurityContextConstraints, pod *coreapi.Pod, shouldPass bool, t *testing.T) {
 	t.Helper()
 	tc := setupClientSet()
@@ -1273,6 +1309,37 @@ func goodPod() *coreapi.Pod {
 					SecurityContext: &coreapi.SecurityContext{},
 				},
 			},
+		},
+	}
+}
+
+// windowsPod returns windows pod without any SCCs which are specific to Linux. The admission of Windows pod
+// should be safely ignored.
+func windowsPod() *coreapi.Pod {
+	return &coreapi.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+		},
+		Spec: coreapi.PodSpec{
+			OS: &coreapi.PodOS{
+				Name: coreapi.Windows,
+			},
+			ServiceAccountName: "default",
+		},
+	}
+}
+
+// linuxPod returns linux pod without any SCCs but with OS field explicitly set
+func linuxPod() *coreapi.Pod {
+	return &coreapi.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+		},
+		Spec: coreapi.PodSpec{
+			OS: &coreapi.PodOS{
+				Name: coreapi.Linux,
+			},
+			ServiceAccountName: "default",
 		},
 	}
 }
