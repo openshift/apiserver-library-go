@@ -142,9 +142,12 @@ var standardSCCNames = sets.NewString(
 	"hostaccess",
 	"hostmount-anyuid",
 	"hostnetwork",
+	"hostnetwork-v2",
 	"nonroot",
+	"nonroot-v2",
 	"privileged",
 	"restricted",
+	"restricted-v2",
 )
 
 func requireStandardSCCs(sccs []*securityv1.SecurityContextConstraints, err error) error {
