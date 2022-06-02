@@ -3,6 +3,7 @@ package clusterresourcequota
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"sync"
@@ -102,8 +103,8 @@ func (q *clusterQuotaAdmission) Validate(ctx context.Context, a admission.Attrib
 		return nil
 	}
 
-	if !q.waitForSyncedStore(time.After(timeToWaitForCacheSync)) {
-		return admission.NewForbidden(a, errors.New("caches not synchronized"))
+	if !q.waitForSyncedStore(time.After(timeToWaitForCacheSync)) {		
+		return admission.NewForbidden(a, fmt.Errorf("%s-%s: caches not synchronized", accessor.GetNamespace(), accessor.GetName()))
 	}
 
 	q.init.Do(func() {
