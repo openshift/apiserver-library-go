@@ -32,8 +32,12 @@ import (
 	"github.com/openshift/library-go/pkg/quota/clusterquotamapping"
 )
 
+const (
+	pluginName = "quota.openshift.io/ClusterResourceQuota"
+)
+
 func Register(plugins *admission.Plugins) {
-	plugins.Register("quota.openshift.io/ClusterResourceQuota",
+	plugins.Register(pluginName,
 		func(config io.Reader) (admission.Interface, error) {
 			return NewClusterResourceQuota()
 		})
@@ -103,8 +107,8 @@ func (q *clusterQuotaAdmission) Validate(ctx context.Context, a admission.Attrib
 		return nil
 	}
 
-	if !q.waitForSyncedStore(time.After(timeToWaitForCacheSync)) {		
-		return admission.NewForbidden(a, fmt.Errorf("%s-%s: caches not synchronized", accessor.GetNamespace(), accessor.GetName()))
+	if !q.waitForSyncedStore(time.After(timeToWaitForCacheSync)) {
+		return admission.NewForbidden(a, fmt.Errorf("%s: caches not synchronized", pluginName))
 	}
 
 	q.init.Do(func() {
