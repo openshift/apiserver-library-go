@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -927,6 +928,154 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 		}
 		if v.expected != nil && sc.ReadOnlyRootFilesystem != nil && (*v.expected != *sc.ReadOnlyRootFilesystem) {
 			t.Errorf("%s expected a non nil ReadOnlyRootFilesystem set to %t but got %t", k, *v.expected, *sc.ReadOnlyRootFilesystem)
+		}
+
+	}
+}
+
+func TestGenerateNonRootSecurityContextOnNonZeroRunAsUser(t *testing.T) {
+	userSCC := defaultSCC()
+	var minRange int64 = 100
+	var maxRange int64 = 900
+	userSCC.RunAsUser = securityv1.RunAsUserStrategyOptions{
+		Type:        securityv1.RunAsUserStrategyMustRunAsRange,
+		UIDRangeMin: &minRange,
+		UIDRangeMax: &maxRange,
+	}
+
+	rootMinSCC := defaultSCC()
+	var rootUID int64 = 0
+	rootMinSCC.RunAsUser = securityv1.RunAsUserStrategyOptions{
+		Type:        securityv1.RunAsUserStrategyMustRunAsRange,
+		UIDRangeMin: &rootUID,
+		UIDRangeMax: &maxRange,
+	}
+
+	nonRootSCC := defaultSCC()
+	nonRootSCC.RunAsUser = securityv1.RunAsUserStrategyOptions{
+		Type: securityv1.RunAsUserStrategyMustRunAsNonRoot,
+	}
+
+	var useruid int64 = 500
+	containerUserPod := defaultPod()
+	containerUserPod.Spec.Containers[0].SecurityContext.RunAsUser = &useruid
+
+	podUserPod := defaultPod()
+	podUserPod.Spec.SecurityContext.RunAsUser = &useruid
+
+	zeroPodUserPod := defaultPod()
+	zeroPodUserPod.Spec.SecurityContext.RunAsUser = &rootUID
+
+	zeroContainerUserPod := defaultPod()
+	zeroContainerUserPod.Spec.Containers[0].SecurityContext.RunAsUser = &rootUID
+
+	zeroPodUserPodNonRootSCC := zeroPodUserPod.DeepCopy()
+	zeroContainerUserPodNonRootSCC := zeroContainerUserPod.DeepCopy()
+
+	falseVal := false
+	trueVal := true
+	tests := map[string]struct {
+		pod        *api.Pod
+		scc        *securityv1.SecurityContextConstraints
+		expectedSC *api.SecurityContext
+	}{
+		"generate non-zero user": {
+			pod: defaultPod(),
+			scc: userSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    &minRange,
+				RunAsNonRoot: &trueVal,
+				Privileged:   &falseVal,
+			},
+		},
+		"generate zero user": {
+			pod: defaultPod(),
+			scc: rootMinSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    &rootUID,
+				RunAsNonRoot: nil,
+				Privileged:   &falseVal,
+			},
+		},
+		"nonzero user set on pod level": {
+			pod: podUserPod,
+			scc: userSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    nil,
+				RunAsNonRoot: &trueVal,
+				Privileged:   &falseVal,
+			},
+		},
+		"nonzero user set on container level": {
+			pod: containerUserPod,
+			scc: userSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    &useruid,
+				RunAsNonRoot: &trueVal,
+				Privileged:   &falseVal,
+			},
+		},
+		"zero user set on pod level": {
+			pod: zeroPodUserPod,
+			scc: rootMinSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    nil,
+				RunAsNonRoot: nil,
+				Privileged:   &falseVal,
+			},
+		},
+		"zero user set on container level": {
+			pod: zeroContainerUserPod,
+			scc: rootMinSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    &rootUID,
+				RunAsNonRoot: nil,
+				Privileged:   &falseVal,
+			},
+		},
+		"no user set, nonroot SCC": {
+			pod: defaultPod(),
+			scc: nonRootSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    nil,
+				RunAsNonRoot: &trueVal,
+				Privileged:   &falseVal,
+			},
+		},
+		"zero user set on pod level, nonroot SCC": {
+			pod: zeroPodUserPodNonRootSCC,
+			scc: nonRootSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    nil,
+				RunAsNonRoot: nil,
+				Privileged:   &falseVal,
+			},
+		},
+		"zero user set on container level, nonroot SCC": {
+			pod: zeroContainerUserPodNonRootSCC,
+			scc: nonRootSCC,
+			expectedSC: &api.SecurityContext{
+				RunAsUser:    &rootUID,
+				RunAsNonRoot: nil,
+				Privileged:   &falseVal,
+			},
+		},
+	}
+
+	for k, v := range tests {
+		provider, err := NewSimpleProvider(v.scc)
+		if err != nil {
+			t.Errorf("%s unable to create provider %v", k, err)
+			continue
+		}
+		sc, err := provider.CreateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0])
+		if err != nil {
+			t.Errorf("%s unable to create container security context %v", k, err)
+			continue
+		}
+
+		if !equality.Semantic.DeepEqual(v.expectedSC, sc) {
+			t.Errorf("%s expected security context does not match the actual: %s", k, diff.ObjectDiff(v.expectedSC, sc))
 		}
 
 	}

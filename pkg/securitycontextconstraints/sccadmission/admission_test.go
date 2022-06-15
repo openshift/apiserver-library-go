@@ -310,6 +310,7 @@ func TestAdmitSuccess(t *testing.T) {
 
 	seLinuxLevelFromNamespace := namespace.Annotations[securityv1.MCSAnnotation]
 
+	trueVal := true
 	testCases := map[string]struct {
 		pod                 *coreapi.Pod
 		expectedPodSC       *coreapi.PodSecurityContext
@@ -318,27 +319,27 @@ func TestAdmitSuccess(t *testing.T) {
 		"specifyUIDInRange": {
 			pod:                 specifyUIDInRange,
 			expectedPodSC:       podSC(seLinuxLevelFromNamespace, defaultGroup, defaultGroup),
-			expectedContainerSC: containerSC(nil, goodUID),
+			expectedContainerSC: containerSC(nil, goodUID, &trueVal),
 		},
 		"specifyLabels": {
 			pod:                 specifyLabels,
 			expectedPodSC:       podSC(seLinuxLevelFromNamespace, defaultGroup, defaultGroup),
-			expectedContainerSC: containerSC(&seLinuxLevelFromNamespace, 1),
+			expectedContainerSC: containerSC(&seLinuxLevelFromNamespace, 1, &trueVal),
 		},
 		"specifyFSGroup": {
 			pod:                 specifyFSGroupInRange,
 			expectedPodSC:       podSC(seLinuxLevelFromNamespace, goodFSGroup, defaultGroup),
-			expectedContainerSC: containerSC(nil, 1),
+			expectedContainerSC: containerSC(nil, 1, &trueVal),
 		},
 		"specifySupGroup": {
 			pod:                 specifySupGroup,
 			expectedPodSC:       podSC(seLinuxLevelFromNamespace, defaultGroup, 3),
-			expectedContainerSC: containerSC(nil, 1),
+			expectedContainerSC: containerSC(nil, 1, &trueVal),
 		},
 		"specifyPodLevelSELinuxLevel": {
 			pod:                 specifyPodLevelSELinux,
 			expectedPodSC:       podSC(seLinuxLevelFromNamespace, defaultGroup, defaultGroup),
-			expectedContainerSC: containerSC(nil, 1),
+			expectedContainerSC: containerSC(nil, 1, &trueVal),
 		},
 	}
 
@@ -1344,9 +1345,10 @@ func linuxPod() *coreapi.Pod {
 	}
 }
 
-func containerSC(seLinuxLevel *string, uid int64) *coreapi.SecurityContext {
+func containerSC(seLinuxLevel *string, uid int64, runAsNonRoot *bool) *coreapi.SecurityContext {
 	sc := &coreapi.SecurityContext{
-		RunAsUser: &uid,
+		RunAsUser:    &uid,
+		RunAsNonRoot: runAsNonRoot,
 	}
 	if seLinuxLevel != nil {
 		sc.SELinuxOptions = &coreapi.SELinuxOptions{
