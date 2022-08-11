@@ -7,4 +7,5 @@ const (
 	SupplementalGroupsAnnotation = "openshift.io/sa.scc.supplemental-groups"
 	MCSAnnotation                = "openshift.io/sa.scc.mcs"
 	ValidatedSCCAnnotation       = "openshift.io/scc"
+	RequiredSCCAnnotation       = "openshift.io/required-scc"
 )
