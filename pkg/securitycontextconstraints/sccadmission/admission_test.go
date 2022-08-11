@@ -879,6 +879,10 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriority := int32(5)
 	matchingPrioritySCCOne.Priority = &matchingPriority
 
+	matchingPrioritySCCOneNoAllowedGroups := matchingPrioritySCCOne.DeepCopy()
+	matchingPrioritySCCOneNoAllowedGroups.Name = "matchingPrioritySCCOneNoAllowedGroups"
+	matchingPrioritySCCOneNoAllowedGroups.Groups = []string{}
+
 	matchingPrioritySCCTwo := laxSCC()
 	matchingPrioritySCCTwo.Name = "matchingPrioritySCCTwo"
 	matchingPrioritySCCTwo.RunAsUser = securityv1.RunAsUserStrategyOptions{
@@ -908,10 +912,10 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCTwo.Priority = &matchingPriorityAndScorePriority
 
 	// we will expect these to sort as:
-	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCTwo",
+	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
 		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo"}
 	sccsToSort := []*securityv1.SecurityContextConstraints{matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
-		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted}
+		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups}
 
 	sort.Sort(sccsort.ByPriority(sccsToSort))
 
@@ -942,6 +946,27 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCOnePod := goodPod()
 	matchingPriorityAndScoreSCCOnePod.Spec.Containers[0].SecurityContext.RunAsUser = &uidSix
 	testSCCAdmission(matchingPriorityAndScoreSCCOnePod, plugin, matchingPriorityAndScoreSCCOne.Name, "match matchingPriorityAndScoreSCCOne by setting RunAsUser to 6", t)
+
+	// test forcing the usage of a lower priority SCC
+	matchingPrioritySCCOneForcingOtherPod := matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCTwo.Name
+	testSCCAdmission(matchingPrioritySCCOneForcingOtherPod, plugin, matchingPrioritySCCTwo.Name, "match matchingPrioritySCCTwo by annotation", t)
+
+	// test forcing the usage of a lower priority that doesn't match
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPriorityAndScoreSCCOne.Name
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "unable to validate against any security context constraint: spec.containers[0].securityContext.runAsUser: Invalid value: 5: must be: 6", t)
+
+	// test forcing the usage of scc that doesn't exist
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = "does-not-exist"
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "required scc/does-not-exist not found", t)
+
+	// test forcing the usage of scc that the user cannot use
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCOneNoAllowedGroups.Name
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "provider \"matchingPrioritySCCOneNoAllowedGroups\": Forbidden: not usable by user or serviceaccount", t)
+
 }
 
 func TestAdmitSeccomp(t *testing.T) {
@@ -1156,6 +1181,20 @@ func testSCCAdmission(pod *coreapi.Pod, plugin admission.Interface, expectedSCC,
 		return true
 	}
 	return false
+}
+
+func testSCCAdmissionError(pod *coreapi.Pod, plugin admission.Interface, expectedError string, t *testing.T) {
+	t.Helper()
+	attrs := admission.NewAttributesRecord(pod, nil, coreapi.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
+	err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
+	if err == nil {
+		t.Errorf("missing any error")
+		return
+	}
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("missing expected error %q in: %v", expectedError, err.Error())
+		return
+	}
 }
 
 func laxSCC() *securityv1.SecurityContextConstraints {

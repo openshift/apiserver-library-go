@@ -91,7 +91,7 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 	// TODO(liggitt): allow spec mutation during initializing updates?
 	specMutationAllowed := a.GetOperation() == admission.Create
 
-	allowedPod, sccName, validationErrs, err := c.computeSecurityContext(ctx, a, pod, specMutationAllowed, "")
+	allowedPod, sccName, validationErrs, err := c.computeSecurityContext(ctx, a, pod, specMutationAllowed, pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation], "")
 	if err != nil {
 		return admission.NewForbidden(a, err)
 	}
@@ -120,8 +120,16 @@ func (c *constraint) Validate(ctx context.Context, a admission.Attributes, _ adm
 	}
 	pod := a.GetObject().(*coreapi.Pod)
 
+	// this one is required
+	requiredSCCName := pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation]
+	// this one is non-binding
+	validatedSCCNameHint := pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation]
+	if len(requiredSCCName) > 0 && requiredSCCName != validatedSCCNameHint {
+		return admission.NewForbidden(a, fmt.Errorf("required scc/%v does not match the suggested scc/%v", requiredSCCName, validatedSCCNameHint))
+	}
+
 	// compute the context. Mutation is not allowed. ValidatedSCCAnnotation is used as a hint to gain same speed-up.
-	allowedPod, _, validationErrs, err := c.computeSecurityContext(ctx, a, pod, false, pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation])
+	allowedPod, _, validationErrs, err := c.computeSecurityContext(ctx, a, pod, false, requiredSCCName, validatedSCCNameHint)
 	if err != nil {
 		return admission.NewForbidden(a, err)
 	}
@@ -168,7 +176,7 @@ func requireStandardSCCs(sccs []*securityv1.SecurityContextConstraints, err erro
 	return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is missing %v", strings.Join(missingSCCs.List(), ", "))
 }
 
-func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Attributes, pod *coreapi.Pod, specMutationAllowed bool, validatedSCCHint string) (*coreapi.Pod, string, field.ErrorList, error) {
+func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Attributes, pod *coreapi.Pod, specMutationAllowed bool, requiredSCCName, validatedSCCHint string) (*coreapi.Pod, string, field.ErrorList, error) {
 	// get all constraints that are usable by the user
 	klog.V(4).Infof("getting security context constraints for pod %s (generate: %s) in namespace %s with user info %v", pod.Name, pod.GenerateName, a.GetNamespace(), a.GetUserInfo())
 
@@ -210,6 +218,20 @@ func (c *constraint) computeSecurityContext(ctx context.Context, a admission.Att
 			return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
 		}
 		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in namespace %s", a.GetNamespace()))
+	}
+
+	if len(requiredSCCName) > 0 {
+		var requiredConstraint *securityv1.SecurityContextConstraints
+		for i := range constraints {
+			if constraints[i].Name == requiredSCCName {
+				requiredConstraint = constraints[i]
+				break
+			}
+		}
+		if requiredConstraint == nil {
+			return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("required scc/%v not found", requiredSCCName))
+		}
+		constraints = []*securityv1.SecurityContextConstraints{requiredConstraint}
 	}
 
 	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
