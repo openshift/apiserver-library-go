@@ -220,6 +220,11 @@ func TestValidatePod(t *testing.T) {
 			pod:             newPod("docker/default", nil),
 			expectedMsg:     "",
 		},
+		"specific profile does not allow any other profiles": {
+			allowedProfiles: []string{"runtime/default"},
+			pod:             newPod("", &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			expectedMsg:     "unconfined is not an allowed seccomp profile. Valid values are [runtime/default]",
+		},
 	}
 
 	for name, tc := range tests {
@@ -324,6 +329,16 @@ func TestValidateContainer(t *testing.T) {
 				LocalhostProfile: strP("bar"),
 			}),
 			expectedMsg: "Forbidden: localhost/bar is not an allowed seccomp profile. Valid values are [localhost/foo]",
+		},
+		"runtime/default allows the profile of that type": {
+			allowedProfiles: []string{"runtime/default"},
+			pod:             newPod("", &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault}),
+			expectedMsg:     "",
+		},
+		"specific profile does not allow any other profiles": {
+			allowedProfiles: []string{"runtime/default"},
+			pod:             newPod("", &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			expectedMsg:     "unconfined is not an allowed seccomp profile. Valid values are [runtime/default]",
 		},
 	}
 
