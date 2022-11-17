@@ -8,21 +8,22 @@ import (
 	"testing"
 	"time"
 
-	securityv1 "github.com/openshift/api/security/v1"
-	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
-	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
-	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/utils/pointer"
+
+	securityv1 "github.com/openshift/api/security/v1"
+	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
+	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
+	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 )
 
 // createSAForTest Build and Initializes a ServiceAccount for tests
@@ -49,13 +50,13 @@ func createNamespaceForTest() *corev1.Namespace {
 	}
 }
 
-func newTestAdmission(lister securityv1listers.SecurityContextConstraintsLister, kclient kubernetes.Interface, authorizer authorizer.Authorizer) admission.Interface {
+func newTestAdmission(sccLister securityv1listers.SecurityContextConstraintsLister, nsLister corev1listers.NamespaceLister, authorizer authorizer.Authorizer) admission.Interface {
 	return &constraint{
-		Handler:    admission.NewHandler(admission.Create),
-		client:     kclient,
-		sccLister:  lister,
-		sccSynced:  func() bool { return true },
-		authorizer: authorizer,
+		Handler:         admission.NewHandler(admission.Create),
+		namespaceLister: nsLister,
+		sccLister:       sccLister,
+		listersSynced:   []cache.InformerSynced{func() bool { return true }},
+		authorizer:      authorizer,
 	}
 }
 
@@ -225,11 +226,11 @@ func TestShouldIgnore(t *testing.T) {
 
 func testSCCAdmit(testCaseName string, sccs []*securityv1.SecurityContextConstraints, pod *coreapi.Pod, shouldPass bool, t *testing.T) {
 	t.Helper()
-	tc := setupClientSet()
 
-	lister := createSCCLister(t, sccs)
+	nsLister := createNamespaceLister(t, createNamespaceForTest())
+	sccLister := createSCCLister(t, sccs)
 	testAuthorizer := &sccTestAuthorizer{t: t}
-	plugin := newTestAdmission(lister, tc, testAuthorizer)
+	plugin := newTestAdmission(sccLister, nsLister, testAuthorizer)
 
 	attrs := admission.NewAttributesRecord(pod, nil, coreapi.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
 	err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
@@ -250,14 +251,6 @@ func testSCCAdmit(testCaseName string, sccs []*securityv1.SecurityContextConstra
 }
 
 func TestAdmitSuccess(t *testing.T) {
-	// create the annotated namespace and add it to the fake client
-	namespace := createNamespaceForTest()
-
-	serviceAccount := createSAForTest()
-	serviceAccount.Namespace = namespace.Name
-
-	tc := fake.NewSimpleClientset(namespace, serviceAccount)
-
 	// used for cases where things are preallocated
 	defaultGroup := int64(2)
 
@@ -274,11 +267,13 @@ func TestAdmitSuccess(t *testing.T) {
 		saExactSCC,
 		saSCC,
 	})
+	namespace := createNamespaceForTest()
+	nsLister := createNamespaceLister(t, namespace)
 
 	testAuthorizer := &sccTestAuthorizer{t: t}
 
 	// create the admission plugin
-	p := newTestAdmission(lister, tc, testAuthorizer)
+	p := newTestAdmission(lister, nsLister, testAuthorizer)
 
 	// specifies a UID in the range of the preallocated UID annotation
 	specifyUIDInRange := goodPod()
@@ -369,8 +364,6 @@ func TestAdmitSuccess(t *testing.T) {
 }
 
 func TestAdmitFailure(t *testing.T) {
-	tc := setupClientSet()
-
 	// create scc that requires allocation retrieval
 	saSCC := saSCC()
 
@@ -384,11 +377,12 @@ func TestAdmitFailure(t *testing.T) {
 		saExactSCC,
 		saSCC,
 	})
+	nsLister := createNamespaceLister(t, createNamespaceForTest())
 
 	testAuthorizer := &sccTestAuthorizer{t: t}
 
 	// create the admission plugin
-	p := newTestAdmission(lister, tc, testAuthorizer)
+	p := newTestAdmission(lister, nsLister, testAuthorizer)
 
 	// setup test data
 	uidNotInRange := goodPod()
@@ -715,7 +709,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 	for k, v := range testCases {
 		t.Run(k, func(t *testing.T) {
 			// create the admission handler
-			tc := fake.NewSimpleClientset(v.namespace)
+			nsLister := createNamespaceLister(t, v.namespace)
 			scc := v.scc()
 
 			// create the providers, this method only needs the namespace
@@ -723,7 +717,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 			// let timeout based failures fail fast
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 			defer cancel()
-			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, tc)
+			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister)
 
 			if !reflect.DeepEqual(scc, v.scc()) {
 				diff := diff.ObjectDiff(scc, v.scc())
@@ -926,12 +920,12 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	// SCCs and ensure that they come out with the right annotation.  This means admission
 	// is using the sort strategy we expect.
 
-	tc := setupClientSet()
-	lister := createSCCLister(t, sccsToSort)
+	sccLister := createSCCLister(t, sccsToSort)
+	nsLister := createNamespaceLister(t, createNamespaceForTest())
 	testAuthorizer := &sccTestAuthorizer{t: t}
 
 	// create the admission plugin
-	plugin := newTestAdmission(lister, tc, testAuthorizer)
+	plugin := newTestAdmission(sccLister, nsLister, testAuthorizer)
 
 	testSCCAdmission(goodPod(), plugin, restricted.Name, "match the restricted SCC", t)
 
@@ -1106,10 +1100,10 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		// We can't use testSCCAdmission() here because it doesn't support Update operation.
 		// We can't use testSCCAdmit() here because it doesn't support Update operation and doesn't check for the SCC annotation.
 
-		tc := setupClientSet()
 		lister := createSCCLister(t, testCase.sccs)
+		nsLister := createNamespaceLister(t, createNamespaceForTest())
 		testAuthorizer := &sccTestAuthorizer{t: t}
-		plugin := newTestAdmission(lister, tc, testAuthorizer)
+		plugin := newTestAdmission(lister, nsLister, testAuthorizer)
 
 		attrs := admission.NewAttributesRecord(testCase.newPod, testCase.oldPod, coreapi.Kind("Pod").WithVersion("version"), testCase.newPod.Namespace, testCase.newPod.Name, coreapi.Resource("pods").WithVersion("version"), "", testCase.operation, nil, false, &user.DefaultInfo{})
 		err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
@@ -1196,10 +1190,10 @@ func TestRestrictedMessage(t *testing.T) {
 
 	for testCaseName, testCase := range tests {
 		t.Run(testCaseName, func(t *testing.T) {
-			tc := setupClientSet()
 			lister := createSCCLister(t, testCase.sccs)
+			nsLister := createNamespaceLister(t, createNamespaceForTest())
 			testAuthorizer := &sccTestAuthorizer{t: t}
-			plugin := newTestAdmission(lister, tc, testAuthorizer)
+			plugin := newTestAdmission(lister, nsLister, testAuthorizer)
 
 			attrs := admission.NewAttributesRecord(
 				testCase.newPod,
@@ -1470,13 +1464,12 @@ func podSC(seLinuxLevel string, fsGroup, supGroup int64) *coreapi.PodSecurityCon
 	}
 }
 
-func setupClientSet() *fake.Clientset {
+func setupClientSet(namespace *corev1.Namespace) *fake.Clientset {
 	// create the annotated namespace and add it to the fake client
-	namespace := createNamespaceForTest()
 	serviceAccount := createSAForTest()
 	serviceAccount.Namespace = namespace.Name
 
-	return fake.NewSimpleClientset(namespace, serviceAccount)
+	return fake.NewSimpleClientset(serviceAccount)
 }
 
 func createSCCListerAndIndexer(t *testing.T, sccs []*securityv1.SecurityContextConstraints) (securityv1listers.SecurityContextConstraintsLister, cache.Indexer) {
@@ -1514,6 +1507,29 @@ func createSCCLister(t *testing.T, sccs []*securityv1.SecurityContextConstraints
 	t.Helper()
 
 	lister, _ := createSCCListerAndIndexer(t, sccs)
+	return lister
+}
+
+func createNamespaceListerAndIndexer(t *testing.T, namespaces ...*corev1.Namespace) (corev1listers.NamespaceLister, cache.Indexer) {
+	t.Helper()
+
+	// add the required SCC so admission runs
+	nsForLister := []*corev1.Namespace{}
+	nsForLister = append(nsForLister, namespaces...)
+
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	lister := corev1listers.NewNamespaceLister(indexer)
+	for _, namespace := range nsForLister {
+		if err := indexer.Add(namespace); err != nil {
+			t.Fatalf("error adding namespace to store: %v", err)
+		}
+	}
+	return lister, indexer
+}
+func createNamespaceLister(t *testing.T, namespaces ...*corev1.Namespace) corev1listers.NamespaceLister {
+	t.Helper()
+
+	lister, _ := createNamespaceListerAndIndexer(t, namespaces...)
 	return lister
 }
 

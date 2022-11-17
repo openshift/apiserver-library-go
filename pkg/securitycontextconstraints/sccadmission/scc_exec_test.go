@@ -98,9 +98,9 @@ func TestExecAdmit(t *testing.T) {
 			// create the admission plugin
 			p := NewSCCExecRestrictions()
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-			cache := securityv1listers.NewSecurityContextConstraintsLister(indexer)
-			p.constraintAdmission.sccLister = cache
-			p.constraintAdmission.sccSynced = func() bool { return true }
+			sccCache := securityv1listers.NewSecurityContextConstraintsLister(indexer)
+			p.constraintAdmission.sccLister = sccCache
+			p.constraintAdmission.listersSynced = []cache.InformerSynced{func() bool { return true }}
 			p.SetExternalKubeClientSet(tc)
 
 			attrs := admission.NewAttributesRecord(nil, nil, coreapi.Kind("Pod").WithVersion("version"), "namespace", "pod-name", coreapi.Resource(v.resource).WithVersion("version"), v.subresource, v.operation, nil, false, &user.DefaultInfo{})
