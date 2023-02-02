@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	securityv1 "github.com/openshift/api/security/v1"
+	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
+	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
+	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
@@ -18,11 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
-
-	securityv1 "github.com/openshift/api/security/v1"
-	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
-	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
-	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
+	"k8s.io/utils/pointer"
 )
 
 // createSAForTest Build and Initializes a ServiceAccount for tests
@@ -1131,6 +1131,108 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 				t.Errorf("%s expected errors but received none", testCaseName)
 			}
 		}
+	}
+
+}
+
+func TestRestrictedMessage(t *testing.T) {
+	usableRestricted := restrictiveSCC()
+	usableRestricted.Name = "restricted"
+
+	// restricted must match, but we don't have permissions to use it
+	unusableRestricted := restrictiveSCC()
+	unusableRestricted.Name = "restricted"
+	unusableRestricted.Groups = []string{}
+
+	// restrictedv2 must not match, but we do have permission to use it
+	restrictv2 := restrictiveSCC()
+	restrictv2.AllowPrivilegeEscalation = pointer.Bool(false)
+	restrictv2.Name = "restricted-v2"
+
+	restrictedv2Pod := goodPod()
+	restrictedv2Pod.Spec.Containers[0].Name = "simple-pod"
+	restrictedv2Pod.Spec.Containers[0].Image = "test-image:0.1"
+
+	simplePod := goodPod()
+	simplePod.Spec.Containers[0].Name = "simple-pod"
+	simplePod.Spec.Containers[0].Image = "test-image:0.1"
+	simplePod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(true)
+
+	privilegedPod := goodPod()
+	privilegedPod.Spec.Containers[0].Name = "simple-pod"
+	privilegedPod.Spec.Containers[0].Image = "test-image:0.1"
+	privilegedPod.Spec.Containers[0].SecurityContext.Privileged = pointer.Bool(true)
+
+	tryRestrictedMessage := "fails to validate against the `restricted-v2` security context constraint, but would validate successfully against the `restricted`"
+
+	tests := map[string]struct {
+		oldPod            *coreapi.Pod
+		newPod            *coreapi.Pod
+		operation         admission.Operation
+		sccs              []*securityv1.SecurityContextConstraints
+		expectedMessage   string
+		notNotHaveMessage string
+	}{
+		"message about restricted matching": {
+			newPod:          simplePod.DeepCopy(),
+			operation:       admission.Create,
+			sccs:            []*securityv1.SecurityContextConstraints{unusableRestricted, restrictv2},
+			expectedMessage: tryRestrictedMessage,
+		},
+		"no message about restricted if it doesn't match": {
+			newPod:            privilegedPod.DeepCopy(),
+			operation:         admission.Create,
+			sccs:              []*securityv1.SecurityContextConstraints{usableRestricted, restrictv2},
+			expectedMessage:   "unable to validate against any security context constraint",
+			notNotHaveMessage: tryRestrictedMessage,
+		},
+		"no message about restricted if restrictedv2 works": {
+			newPod:          restrictedv2Pod.DeepCopy(),
+			operation:       admission.Create,
+			sccs:            []*securityv1.SecurityContextConstraints{usableRestricted, restrictv2},
+			expectedMessage: "",
+		},
+	}
+
+	for testCaseName, testCase := range tests {
+		t.Run(testCaseName, func(t *testing.T) {
+			tc := setupClientSet()
+			lister := createSCCLister(t, testCase.sccs)
+			testAuthorizer := &sccTestAuthorizer{t: t}
+			plugin := newTestAdmission(lister, tc, testAuthorizer)
+
+			attrs := admission.NewAttributesRecord(
+				testCase.newPod,
+				testCase.oldPod,
+				coreapi.Kind("Pod").WithVersion("version"),
+				testCase.newPod.Namespace,
+				testCase.newPod.Name,
+				coreapi.Resource("pods").WithVersion("version"),
+				"",
+				testCase.operation,
+				nil,
+				false,
+				&user.DefaultInfo{},
+			)
+			err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
+
+			if len(testCase.expectedMessage) == 0 && err != nil {
+				t.Fatalf(err.Error())
+			}
+			if len(testCase.expectedMessage) == 0 && err == nil {
+				return // we pass
+			}
+			if err == nil {
+				t.Fatalf("expected errors but received none")
+			}
+
+			if !strings.Contains(err.Error(), testCase.expectedMessage) {
+				t.Errorf("cannot find %q in: %v", testCase.expectedMessage, err.Error())
+			}
+			if len(testCase.notNotHaveMessage) > 0 && strings.Contains(err.Error(), testCase.notNotHaveMessage) {
+				t.Errorf("found %q in: %v", testCase.notNotHaveMessage, err.Error())
+			}
+		})
 	}
 
 }
