@@ -2,6 +2,7 @@ package sccadmission
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -1562,4 +1563,119 @@ func isValidSCCAttributes(a authorizer.Attributes) bool {
 		a.GetAPIGroup() == "security.openshift.io" &&
 		a.GetResource() == "securitycontextconstraints" &&
 		a.IsResourceRequest()
+}
+
+func TestSetValidatedSCCAnnotation(t *testing.T) {
+	tcs := []struct {
+		pod                   *coreapi.Pod
+		sccNames              []string
+		expectedSCCAnnotation string
+		expectedSCCHistory    []string
+	}{
+		// 0
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			sccNames:              []string{"restricted"},
+			expectedSCCAnnotation: "restricted",
+			expectedSCCHistory:    []string{},
+		},
+		// 1
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						securityv1.ValidatedSCCAnnotation: "restricted",
+					},
+				},
+			},
+			sccNames:              []string{"privileged"},
+			expectedSCCAnnotation: "privileged",
+			expectedSCCHistory:    []string{"restricted"},
+		},
+		// 2
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			sccNames:              []string{"restricted", "hostnetwork", "nonroot", "privileged"},
+			expectedSCCAnnotation: "privileged",
+			expectedSCCHistory:    []string{"nonroot", "hostnetwork", "restricted"},
+		},
+		// 3
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						securityv1.SCCHistory: `["restricted", "anyuid"]`, // Invalid history, should be empty.
+					},
+				},
+			},
+			sccNames:              []string{"privileged"},
+			expectedSCCAnnotation: "privileged",
+			expectedSCCHistory:    []string{}, // We expect this to be unset.
+		},
+		// 4
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pod-with-issues",
+					Annotations: map[string]string{
+						securityv1.SCCHistory:             `["restricted",`, // Invalid history, cannot be parse.
+						securityv1.ValidatedSCCAnnotation: "hostnetwork",
+					},
+				},
+			},
+			sccNames:              []string{"privileged"},
+			expectedSCCAnnotation: "privileged",
+			expectedSCCHistory:    []string{"hostnetwork"}, // We expect this to ignore the invalid history.
+		},
+		// 5
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			sccNames:              []string{"restricted", "restricted", "privileged", "privileged"},
+			expectedSCCAnnotation: "privileged",
+			expectedSCCHistory:    []string{"restricted"},
+		},
+		// 6
+		{
+			pod: &coreapi.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			sccNames:              []string{"restricted", "restricted", "restricted", "restricted"},
+			expectedSCCAnnotation: "restricted",
+			expectedSCCHistory:    []string{},
+		},
+	}
+	for i, tc := range tcs {
+		tc := tc
+		for _, sccName := range tc.sccNames {
+			setValidatedSCCAnnotation(tc.pod, sccName)
+		}
+		if sccAnnotation, ok := tc.pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation]; !ok ||
+			sccAnnotation != tc.expectedSCCAnnotation {
+			t.Fatalf("TestSetValidatedSCCAnnotation(%d): Expected to get SCCAnnotation %q but got %q instead",
+				i, tc.expectedSCCAnnotation, sccAnnotation)
+		}
+		sccHistorySlice := []string{}
+		sccHistoryStr, ok := tc.pod.ObjectMeta.Annotations[securityv1.SCCHistory]
+		if ok {
+			_ = json.Unmarshal([]byte(sccHistoryStr), &sccHistorySlice)
+		}
+		if !reflect.DeepEqual(tc.expectedSCCHistory, sccHistorySlice) {
+			t.Fatalf("TestSetValidatedSCCAnnotation(%d): Expected to get SCCHistory %q but got '%s' instead",
+				i, tc.expectedSCCHistory, sccHistoryStr)
+		}
+	}
 }

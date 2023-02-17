@@ -2,6 +2,7 @@ package sccadmission
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -103,7 +104,7 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 		if pod.ObjectMeta.Annotations == nil {
 			pod.ObjectMeta.Annotations = map[string]string{}
 		}
-		pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation] = sccName
+		setValidatedSCCAnnotation(pod, sccName)
 		return nil
 	}
 
@@ -491,4 +492,46 @@ func logProviders(pod *coreapi.Pod, providers []sccmatching.SecurityContextConst
 	for _, err := range providerCreationErrs {
 		klog.V(2).Infof("provider creation error: %v", err)
 	}
+}
+
+// setValidatedSCCAnnotation adds securityv1.ValidatedSCCAnnotation to the pod. If a validated SCC annotation already
+// exists on the pod, it will also write securityv1.SCCHistory. This allows administrators to keep track
+// of the different SCCs that the pod transitioned through when the SCC admission plugin was reinvocated.
+func setValidatedSCCAnnotation(pod *coreapi.Pod, sccName string) {
+	setSCCHistory(pod, sccName)
+	pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation] = sccName
+}
+
+// setSCCHistory is a helper for setValidatedSCCAnnotation.
+func setSCCHistory(pod *coreapi.Pod, sccName string) {
+	sccAnnotation, ok := pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation]
+	if !ok || sccAnnotation == "" {
+		// If SCCHistory is set but ValidatedSCCAnnotation is empty, then the history must be invalid. Delete it.
+		if _, ok := pod.ObjectMeta.Annotations[securityv1.SCCHistory]; ok {
+			delete(pod.ObjectMeta.Annotations, securityv1.SCCHistory)
+		}
+		return
+	}
+
+	// Do not create a history entry if the SCCAnnotatoin has not changed.
+	if sccName == sccAnnotation {
+		return
+	}
+
+	sccHistorySlice := []string{}
+	if sccHistoryStr, ok := pod.ObjectMeta.Annotations[securityv1.SCCHistory]; ok {
+		if err := json.Unmarshal([]byte(sccHistoryStr), &sccHistorySlice); err != nil {
+			klog.Warningf("could not unmarshal annotation %q with value %q on pod %q, err: %q",
+				securityv1.SCCHistory, sccHistoryStr, pod.ObjectMeta.Name, err)
+		}
+	}
+	sccHistorySlice = append([]string{sccAnnotation}, sccHistorySlice...)
+
+	sccHistoryStr, err := json.Marshal(sccHistorySlice)
+	if err != nil {
+		klog.Warningf("could not marshal value %v for annotation %q for pod %q, err: %q",
+			sccHistorySlice, securityv1.SCCHistory, pod.ObjectMeta.Name, err)
+		return
+	}
+	pod.ObjectMeta.Annotations[securityv1.SCCHistory] = string(sccHistoryStr)
 }
