@@ -189,31 +189,89 @@ func TestAdmitCaps(t *testing.T) {
 }
 
 func TestShouldIgnore(t *testing.T) {
+	podCreationToAttributes := func(p *coreapi.Pod) admission.Attributes {
+		return admission.NewAttributesRecord(
+			p, nil,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			"",
+			admission.Create,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+
+	withUpdate := func(p *coreapi.Pod, subresource string, mutate func(p *coreapi.Pod) *coreapi.Pod) admission.Attributes {
+		updatedPod := mutate(p.DeepCopy())
+
+		return admission.NewAttributesRecord(
+			p, updatedPod,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			subresource,
+			admission.Update,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+	withStatusUpdate := func(p *coreapi.Pod) admission.Attributes {
+		return withUpdate(p, "status", func(p *coreapi.Pod) *coreapi.Pod {
+			p.Status.Message = "The pod is in this state because it got there somehow"
+			return p
+		})
+	}
+
 	tests := []struct {
-		description  string
-		shouldIgnore bool
-		pod          *coreapi.Pod
+		description         string
+		shouldIgnore        bool
+		admissionAttributes admission.Attributes
 	}{
 		{
-			description:  "Windows pod should be ignored",
-			shouldIgnore: true,
-			pod:          windowsPod(),
+			description:         "Windows pod should be ignored",
+			shouldIgnore:        true,
+			admissionAttributes: podCreationToAttributes(windowsPod()),
 		},
 		{
-			description:  "Linux pod with OS field not set should not be ignored",
-			shouldIgnore: false,
-			pod:          goodPod(),
+			description:         "Linux pod with OS field not set should not be ignored",
+			shouldIgnore:        false,
+			admissionAttributes: podCreationToAttributes(goodPod()),
 		},
 		{
-			description:  "Linux pod with OS field explicitly set should not be ignored",
+			description:         "Linux pod with OS field explicitly set should not be ignored",
+			shouldIgnore:        false,
+			admissionAttributes: podCreationToAttributes(linuxPod()),
+		},
+		{
+			description:         "status updates are ignored",
+			shouldIgnore:        true,
+			admissionAttributes: withStatusUpdate(goodPod()),
+		},
+		{
+			description:  "don't ignore normal updates",
 			shouldIgnore: false,
-			pod:          linuxPod(),
+			admissionAttributes: withUpdate(goodPod(), "",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
+		},
+		{
+			description:  "don't ignore subresources outside the ignore list",
+			shouldIgnore: false,
+			admissionAttributes: withUpdate(goodPod(), "ephemeralcontainers",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			attrs := admission.NewAttributesRecord(test.pod, nil, coreapi.Kind("Pod").WithVersion("version"), test.pod.Namespace, test.pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
-			ignored, err := shouldIgnore(attrs)
+			ignored, err := shouldIgnore(test.admissionAttributes)
 			if err != nil {
 				t.Errorf("expected the test to not error but it errored with %v", err)
 			}
