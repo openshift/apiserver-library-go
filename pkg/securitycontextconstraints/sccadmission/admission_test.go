@@ -187,6 +187,90 @@ func TestAdmitCaps(t *testing.T) {
 	}
 }
 
+func TestShouldIgnore(t *testing.T) {
+	podCreationToAttributes := func(p *coreapi.Pod) admission.Attributes {
+		return admission.NewAttributesRecord(
+			p, nil,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			"",
+			admission.Create,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+
+	withUpdate := func(p *coreapi.Pod, subresource string, mutate func(p *coreapi.Pod) *coreapi.Pod) admission.Attributes {
+		updatedPod := mutate(p.DeepCopy())
+
+		return admission.NewAttributesRecord(
+			p, updatedPod,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			subresource,
+			admission.Update,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+	withStatusUpdate := func(p *coreapi.Pod) admission.Attributes {
+		return withUpdate(p, "status", func(p *coreapi.Pod) *coreapi.Pod {
+			p.Status.Message = "The pod is in this state because it got there somehow"
+			return p
+		})
+	}
+
+	tests := []struct {
+		description         string
+		shouldIgnore        bool
+		admissionAttributes admission.Attributes
+	}{
+		{
+			description:         "Linux pod with OS field not set should not be ignored",
+			shouldIgnore:        false,
+			admissionAttributes: podCreationToAttributes(goodPod()),
+		},
+		{
+			description:         "status updates are ignored",
+			shouldIgnore:        true,
+			admissionAttributes: withStatusUpdate(goodPod()),
+		},
+		{
+			description:  "don't ignore normal updates",
+			shouldIgnore: false,
+			admissionAttributes: withUpdate(goodPod(), "",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
+		},
+		{
+			description:  "don't ignore subresources outside the ignore list",
+			shouldIgnore: false,
+			admissionAttributes: withUpdate(goodPod(), "ephemeralcontainers",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			ignored, err := shouldIgnore(test.admissionAttributes)
+			if err != nil {
+				t.Errorf("expected the test to not error but it errored with %v", err)
+			}
+			if ignored != test.shouldIgnore {
+				t.Errorf("expected outcome %v but got %v", test.shouldIgnore, ignored)
+			}
+		})
+	}
+}
+
 func testSCCAdmit(testCaseName string, sccs []*securityv1.SecurityContextConstraints, pod *coreapi.Pod, shouldPass bool, t *testing.T) {
 	t.Helper()
 	tc := setupClientSet()
