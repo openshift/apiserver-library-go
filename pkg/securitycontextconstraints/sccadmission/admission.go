@@ -417,11 +417,23 @@ loop:
 	return allowedPod, allowingProvider.GetSCCName(), validationErrs, nil
 }
 
+var ignoredSubresources = sets.NewString(
+	"exec",
+	"attach",
+	"binding",
+	"eviction",
+	"log",
+	"portforward",
+	"proxy",
+	"status",
+)
+
 func shouldIgnore(a admission.Attributes) (bool, error) {
 	if a.GetResource().GroupResource() != coreapi.Resource("pods") {
 		return true, nil
 	}
-	if len(a.GetSubresource()) != 0 {
+
+	if subresource := a.GetSubresource(); len(subresource) != 0 && ignoredSubresources.Has(subresource) {
 		return true, nil
 	}
 
