@@ -1121,6 +1121,10 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	nonMutatingSCC := laxSCC()
 	nonMutatingSCC.Name = "non-mutating-scc"
 
+	restrictiveNonMutatingSCC := laxSCC()
+	restrictiveNonMutatingSCC.Name = "restrictive-non-mutating-scc"
+	restrictiveNonMutatingSCC.AllowHostPorts = false
+
 	simplePod := goodPod()
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
@@ -1128,28 +1132,72 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	modifiedPod := simplePod.DeepCopy()
 	modifiedPod.Spec.Containers[0].Image = "test-image:0.2"
 
+	modifiedByEphemeralContainers := simplePod.DeepCopy()
+	modifiedByEphemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
+		{
+			EphemeralContainerCommon: coreapi.EphemeralContainerCommon{
+				SecurityContext: &coreapi.SecurityContext{},
+			},
+		},
+	}
+
+	modifiedByHostPortEphemeralContainers := modifiedByEphemeralContainers.DeepCopy()
+	modifiedByHostPortEphemeralContainers.Spec.EphemeralContainers[0].Ports = []coreapi.ContainerPort{
+		{
+			HostPort: 80,
+		},
+	}
+
+	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC)
+	if err != nil {
+		t.Fatalf("failed to create a mutating provider: %v", err)
+	}
+	mutatedPod := simplePod.DeepCopy()
+	mutatedPod.Spec.SecurityContext, mutatedPod.Annotations, err = mutatingProvider.CreatePodSecurityContext(mutatedPod)
+	if err != nil {
+		t.Fatalf("failed to mutate the pod: %v", err)
+	}
+
+	mutatedPod.Spec.Containers[0].SecurityContext, err = mutatingProvider.CreateContainerSecurityContext(
+		mutatedPod,
+		&mutatedPod.Spec.Containers[0],
+	)
+	if err != nil {
+		t.Fatalf("failed to mutate the container: %v", err)
+	}
+
+	mutatedPodModifiedByEpehemeralContainers := mutatedPod.DeepCopy()
+	mutatedPodModifiedByEpehemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
+		{
+			EphemeralContainerCommon: coreapi.EphemeralContainerCommon{
+				SecurityContext: &coreapi.SecurityContext{},
+			},
+		},
+	}
+
 	tests := map[string]struct {
 		oldPod      *coreapi.Pod
 		newPod      *coreapi.Pod
 		operation   admission.Operation
+		subresource string
 		sccs        []*securityv1.SecurityContextConstraints
 		shouldPass  bool
 		expectedSCC string
 	}{
-		"creation: the first SCC (even if it mutates) should be used": {
+		"creation: most restrictive SCC (even if it mutates) should be used": {
 			newPod:      simplePod.DeepCopy(),
 			operation:   admission.Create,
-			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC, mutatingSCC, nonMutatingSCC},
 			shouldPass:  true,
 			expectedSCC: mutatingSCC.Name,
 		},
-		"updating: the first non-mutating SCC should be used": {
+		"updating: most restrictive non-mutating SCC should be used": {
 			oldPod:      simplePod.DeepCopy(),
 			newPod:      modifiedPod.DeepCopy(),
 			operation:   admission.Update,
-			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC, restrictiveNonMutatingSCC},
 			shouldPass:  true,
-			expectedSCC: nonMutatingSCC.Name,
+			expectedSCC: restrictiveNonMutatingSCC.Name,
 		},
 		"updating: a pod should be rejected when there are only mutating SCCs": {
 			oldPod:     simplePod.DeepCopy(),
@@ -1157,6 +1205,47 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			operation:  admission.Update,
 			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC},
 			shouldPass: false,
+		},
+		"updating ephemeral containers: the first non-mutating SCC should be used": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass:  true,
+			expectedSCC: nonMutatingSCC.Name,
+		},
+		"updating ephemeral containers: only an SCC that also mutates the rest of the pod is available": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass:  false,
+		},
+		"updating ephemeral containers: only an SCC that would mutate the new container is available": {
+			oldPod:      mutatedPod.DeepCopy(),
+			newPod:      mutatedPodModifiedByEpehemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass:  true,
+			expectedSCC: mutatingSCC.Name,
+		},
+		"updating ephemeral containers without subresource: only an SCC that would mutate the new container is available": {
+			oldPod:     mutatedPod.DeepCopy(),
+			newPod:     mutatedPodModifiedByEpehemeralContainers.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass: false,
+		},
+		"updating ephemeral containers: only a non-mutating non-matching SCC": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByHostPortEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC},
+			shouldPass:  false,
 		},
 	}
 
@@ -1169,7 +1258,7 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		testAuthorizer := &sccTestAuthorizer{t: t}
 		plugin := newTestAdmission(lister, tc, testAuthorizer)
 
-		attrs := admission.NewAttributesRecord(testCase.newPod, testCase.oldPod, coreapi.Kind("Pod").WithVersion("version"), testCase.newPod.Namespace, testCase.newPod.Name, coreapi.Resource("pods").WithVersion("version"), "", testCase.operation, nil, false, &user.DefaultInfo{})
+		attrs := admission.NewAttributesRecord(testCase.newPod, testCase.oldPod, coreapi.Kind("Pod").WithVersion("version"), testCase.newPod.Namespace, testCase.newPod.Name, coreapi.Resource("pods").WithVersion("version"), testCase.subresource, testCase.operation, nil, false, &user.DefaultInfo{})
 		err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
 
 		if testCase.shouldPass {
