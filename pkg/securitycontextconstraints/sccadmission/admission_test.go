@@ -2,6 +2,7 @@ package sccadmission
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -18,6 +20,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
+	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 	"k8s.io/utils/pointer"
 
 	securityv1 "github.com/openshift/api/security/v1"
@@ -100,7 +103,7 @@ func TestAdmitCaps(t *testing.T) {
 	allowAllInAllowed.AllowedCapabilities = []corev1.Capability{securityv1.AllowAllCapabilities}
 
 	tc := map[string]struct {
-		pod                  *coreapi.Pod
+		caps                 *coreapi.Capabilities
 		sccs                 []*securityv1.SecurityContextConstraints
 		shouldPass           bool
 		expectedCapabilities *coreapi.Capabilities
@@ -108,41 +111,40 @@ func TestAdmitCaps(t *testing.T) {
 		// UC 1: if an SCC does not define allowed or required caps then a pod requesting a cap
 		// should be rejected.
 		"should reject cap add when not allowed or required": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted},
 			shouldPass: false,
 		},
 		// UC 2: if an SCC allows a cap in the allowed field it should accept the pod request
 		// to add the cap.
 		"should accept cap add when in allowed": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowsFooInAllowed},
 			shouldPass: true,
 		},
 		// UC 3: if an SCC requires a cap then it should accept the pod request
 		// to add the cap.
 		"should accept cap add when in required": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowsFooInRequired},
 			shouldPass: true,
 		},
 		// UC 4: if an SCC requires a cap to be dropped then it should fail both
 		// in the verification of adds and verification of drops
 		"should reject cap add when requested cap is required to be dropped": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, requiresFooToBeDropped},
 			shouldPass: false,
 		},
 		// UC 5: if an SCC requires a cap to be dropped it should accept
 		// a manual request to drop the cap.
 		"should accept cap drop when cap is required to be dropped": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Drop: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Drop: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, requiresFooToBeDropped},
 			shouldPass: true,
 		},
 		// UC 6: required add is defaulted
 		"required add is defaulted": {
-			pod:        goodPod(),
 			sccs:       []*securityv1.SecurityContextConstraints{allowsFooInRequired},
 			shouldPass: true,
 			expectedCapabilities: &coreapi.Capabilities{
@@ -151,7 +153,6 @@ func TestAdmitCaps(t *testing.T) {
 		},
 		// UC 7: required drop is defaulted
 		"required drop is defaulted": {
-			pod:        goodPod(),
 			sccs:       []*securityv1.SecurityContextConstraints{requiresFooToBeDropped},
 			shouldPass: true,
 			expectedCapabilities: &coreapi.Capabilities{
@@ -160,32 +161,46 @@ func TestAdmitCaps(t *testing.T) {
 		},
 		// UC 8: using '*' in allowed caps
 		"should accept cap add when all caps are allowed": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowAllInAllowed},
 			shouldPass: true,
 		},
 	}
 
-	for i := 0; i < 2; i++ {
-		for k, v := range tc {
-			t.Run(k, func(t *testing.T) {
-				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
-
-				testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
-
-				containers := v.pod.Spec.Containers
-				if i == 0 {
-					containers = v.pod.Spec.InitContainers
+	for k, v := range tc {
+		for i := 0; i < 3; i++ {
+			pod := goodPod()
+			if v.caps != nil {
+				pod = createPodWithCaps(v.caps)
+				switch i {
+				case 1:
+					// test init containers
+					pod.Spec.Containers, pod.Spec.InitContainers = nil, pod.Spec.Containers
+				case 2:
+					// test ephemeral containers
+					for _, c := range pod.Spec.Containers {
+						pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{SecurityContext: c.SecurityContext}})
+					}
+					pod.Spec.Containers = nil
 				}
+			}
+
+			t.Run(fmt.Sprintf("%s-%d", k, i), func(t *testing.T) {
+				testSCCAdmit(k, v.sccs, pod, v.shouldPass, t)
 
 				if v.expectedCapabilities != nil {
-					if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
-						t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
-					}
+					podhelpers.VisitContainersWithPath(
+						&pod.Spec, field.NewPath("testPodSpec"), func(container *coreapi.Container, path *field.Path) bool {
+							if !reflect.DeepEqual(v.expectedCapabilities, container.SecurityContext.Capabilities) {
+								t.Errorf("%s resulted in caps that were not expected at path %q - expected: %#v, received: %#v", k, path.String(), v.expectedCapabilities, container.SecurityContext.Capabilities)
+							}
+							return true
+						})
 				}
 			})
 		}
 	}
+
 }
 
 func TestShouldIgnore(t *testing.T) {
