@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/utils/pointer"
 
 	securityv1 "github.com/openshift/api/security/v1"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
@@ -1371,6 +1373,204 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("resetting allowing privilege escalation expected no errors but got %v", errs)
 	}
+}
+
+func TestSeccompAnnotationsFieldsGeneration(t *testing.T) {
+	noSeccompProvider, err := NewSimpleProvider(defaultSCC())
+	require.NoError(t, err)
+
+	sccWildcardSeccomp := defaultSCC()
+	sccWildcardSeccomp.SeccompProfiles = []string{"*"}
+	wildcardSeccompProvider, err := NewSimpleProvider(sccWildcardSeccomp)
+	require.NoError(t, err)
+
+	sccGenerateSeccomp := defaultSCC()
+	sccGenerateSeccomp.SeccompProfiles = []string{corev1.SeccompProfileRuntimeDefault}
+	generateSeccompProvider, err := NewSimpleProvider(sccGenerateSeccomp)
+	require.NoError(t, err)
+
+	podPodSeccompAnnotation := defaultPod()
+	podPodSeccompAnnotation.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: corev1.SeccompProfileRuntimeDefault,
+	}
+
+	podPodSeccompField := defaultPod()
+	podPodSeccompField.Spec.SecurityContext.SeccompProfile = &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault}
+
+	for _, tt := range []struct {
+		name                     string
+		sccProvider              SecurityContextConstraintsProvider
+		pod                      *api.Pod
+		expectedPodAnnotations   map[string]string
+		expectedPodSeccomp       *api.SeccompProfile
+		expectedContainerSeccomp *api.SeccompProfile
+	}{
+		{
+			name:                   "pod - no seccomp, SCC - no seccomp",
+			pod:                    defaultPod(),
+			sccProvider:            noSeccompProvider,
+			expectedPodAnnotations: map[string]string{},
+		},
+		{
+			name:                   "pod - no seccomp, SCC - wildcard seccomp",
+			pod:                    defaultPod(),
+			sccProvider:            wildcardSeccompProvider,
+			expectedPodAnnotations: map[string]string{},
+		},
+		{
+			name:        "pod - no seccomp, SCC - generate seccomp",
+			pod:         defaultPod(),
+			sccProvider: generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{
+				api.SeccompPodAnnotationKey: "runtime/default",
+			},
+			expectedPodSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault},
+		},
+		{
+			name:                   "pod - pod annotation, SCC - no seccomp",
+			pod:                    withAnnotations(defaultPod(), map[string]string{api.SeccompPodAnnotationKey: "unconfined"}),
+			sccProvider:            noSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod annotation, SCC - wildcard seccomp",
+			pod:                    withAnnotations(defaultPod(), map[string]string{api.SeccompPodAnnotationKey: "unconfined"}),
+			sccProvider:            wildcardSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod annotation, SCC - generate seccomp",
+			pod:                    withAnnotations(defaultPod(), map[string]string{api.SeccompPodAnnotationKey: "unconfined"}),
+			sccProvider:            generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod field, SCC - no seccomp",
+			pod:                    withPodSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider:            noSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod field, SCC - wildcard seccomp",
+			pod:                    withPodSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider:            wildcardSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod field, SCC - generate seccomp",
+			pod:                    withPodSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider:            generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                     "pod - container annotation, SCC - no seccomp",
+			pod:                      withAnnotations(defaultPod(), map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"}),
+			sccProvider:              noSeccompProvider,
+			expectedPodAnnotations:   map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                     "pod - container annotation, SCC - wildcard seccomp",
+			pod:                      withAnnotations(defaultPod(), map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"}),
+			sccProvider:              wildcardSeccompProvider,
+			expectedPodAnnotations:   map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:        "pod - container annotation, SCC - generate seccomp",
+			pod:         withAnnotations(defaultPod(), map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"}),
+			sccProvider: generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{
+				api.SeccompPodAnnotationKey:                  "runtime/default",
+				api.SeccompContainerAnnotationKeyPrefix + "": "unconfined",
+			},
+			expectedPodSeccomp:       &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                     "pod - container field, SCC - no seccomp",
+			pod:                      withContainerSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider:              noSeccompProvider,
+			expectedPodAnnotations:   map[string]string{},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                     "pod - container field, SCC - wildcard seccomp",
+			pod:                      withContainerSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider:              wildcardSeccompProvider,
+			expectedPodAnnotations:   map[string]string{},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:        "pod - container field, SCC - generate seccomp",
+			pod:         withContainerSeccomp(defaultPod(), &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined}),
+			sccProvider: generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{
+				api.SeccompPodAnnotationKey: "runtime/default",
+			},
+			expectedPodSeccomp:       &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:                   "pod - pod field and annotation different, SCC - generate seccomp",
+			pod:                    withPodSeccomp(withAnnotations(defaultPod(), map[string]string{api.SeccompPodAnnotationKey: "unconfined"}), &api.SeccompProfile{Type: api.SeccompProfileTypeLocalhost, LocalhostProfile: pointer.String("somelocal")}),
+			sccProvider:            generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{api.SeccompPodAnnotationKey: "unconfined"},
+			expectedPodSeccomp:     &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+		{
+			name:        "pod - container field and annotation different, SCC - generate seccomp",
+			pod:         withContainerSeccomp(withAnnotations(defaultPod(), map[string]string{api.SeccompContainerAnnotationKeyPrefix + "": "unconfined"}), &api.SeccompProfile{Type: api.SeccompProfileTypeLocalhost, LocalhostProfile: pointer.String("somelocal")}),
+			sccProvider: generateSeccompProvider,
+			expectedPodAnnotations: map[string]string{
+				api.SeccompContainerAnnotationKeyPrefix + "": "unconfined",
+				api.SeccompPodAnnotationKey:                  "runtime/default",
+			},
+			expectedPodSeccomp:       &api.SeccompProfile{Type: api.SeccompProfileTypeRuntimeDefault},
+			expectedContainerSeccomp: &api.SeccompProfile{Type: api.SeccompProfileTypeUnconfined},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			podSecurityContext, podAnnotations, err := tt.sccProvider.CreatePodSecurityContext(tt.pod)
+			require.NoError(t, err)
+
+			if !reflect.DeepEqual(tt.expectedPodAnnotations, podAnnotations) {
+				t.Errorf("pod annotations differ: %s", cmp.Diff(tt.expectedPodAnnotations, podAnnotations))
+			}
+
+			if !reflect.DeepEqual(tt.expectedPodSeccomp, podSecurityContext.SeccompProfile) {
+				t.Errorf("pod seccomp profiles differ - expected %v; got %v", tt.expectedPodSeccomp, podSecurityContext.SeccompProfile)
+			}
+
+			containerSecurityContext, err := tt.sccProvider.CreateContainerSecurityContext(tt.pod, &tt.pod.Spec.Containers[0])
+			require.NoError(t, err)
+
+			if !reflect.DeepEqual(tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile) {
+				t.Errorf("container seccomp profiles differ - expected %v; got %v", tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile)
+			}
+		})
+	}
+}
+
+func withAnnotations(pod *api.Pod, annotations map[string]string) *api.Pod {
+	pod.Annotations = annotations
+	return pod
+}
+
+func withPodSeccomp(pod *api.Pod, seccompProfile *api.SeccompProfile) *api.Pod {
+	pod.Spec.SecurityContext.SeccompProfile = seccompProfile
+	return pod
+}
+
+func withContainerSeccomp(pod *api.Pod, seccompProfile *api.SeccompProfile) *api.Pod {
+	pod.Spec.Containers[0].SecurityContext.SeccompProfile = seccompProfile
+	return pod
 }
 
 type projectedVolumeCreator struct {
