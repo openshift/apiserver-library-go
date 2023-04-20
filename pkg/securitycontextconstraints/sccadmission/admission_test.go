@@ -936,6 +936,28 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCOnePod := goodPod()
 	matchingPriorityAndScoreSCCOnePod.Spec.Containers[0].SecurityContext.RunAsUser = &uidSix
 	testSCCAdmission(matchingPriorityAndScoreSCCOnePod, plugin, matchingPriorityAndScoreSCCOne.Name, "match matchingPriorityAndScoreSCCOne by setting RunAsUser to 6", t)
+
+	hintPod1 := goodPod()
+	hintPod1.Annotations = map[string]string{
+		securityv1.SCCHint: matchingPrioritySCCOne.Name,
+	}
+	testSCCAdmission(hintPod1, plugin, matchingPrioritySCCOne.Name, "match SCC matchingPriorityAndScoreSCCOne", t)
+
+	hintPod2 := goodPod()
+	hintPod2.Annotations = map[string]string{
+		securityv1.SCCHint: matchingPrioritySCCOne.Name,
+	}
+	hintPod2.Spec.Containers[0].SecurityContext.RunAsUser = &uidFive
+	testSCCAdmission(hintPod2, plugin, matchingPrioritySCCOne.Name, "match SCC matchingPrioritySCCOne even when "+
+		"RunAsUser is set to to 5", t)
+
+	hintPod3 := goodPod()
+	hintPod3.Annotations = map[string]string{
+		securityv1.SCCHint: matchingPrioritySCCOne.Name,
+	}
+	hintPod3.Spec.Containers[0].SecurityContext.RunAsUser = &uidSix
+	testSCCAdmission(hintPod3, plugin, matchingPriorityAndScoreSCCOne.Name, "match SCC matchingPriorityAndScoreSCCOne "+
+		"when RunAsUser is set to 6 (ignore SCCHint)", t)
 }
 
 func TestAdmitSeccomp(t *testing.T) {
