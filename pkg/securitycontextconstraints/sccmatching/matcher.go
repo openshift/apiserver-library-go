@@ -230,14 +230,14 @@ func CreateProviderFromConstraint(namespace *corev1.Namespace, constraint *secur
 
 	// Resolve the values from the namespace
 	if requiresPreAllocatedUIDRange(constraint) {
-		constraint.RunAsUser.UIDRangeMin, constraint.RunAsUser.UIDRangeMax, err = getPreallocatedUIDRange(namespace)
+		constraint.RunAsUser.UIDRangeMin, constraint.RunAsUser.UIDRangeMax, err = GetPreallocatedUIDRange(namespace)
 		if err != nil {
 			return nil, fmt.Errorf("unable to find pre-allocated uid annotation for namespace %s while trying to configure SCC %s: %v", namespace.Name, constraint.Name, err)
 		}
 	}
 	if requiresPreAllocatedSELinuxLevel(constraint) {
 		var level string
-		if level, err = getPreallocatedLevel(namespace); err != nil {
+		if level, err = GetPreallocatedLevel(namespace); err != nil {
 			return nil, fmt.Errorf("unable to find pre-allocated mcs annotation for namespace %s while trying to configure SCC %s: %v", namespace.Name, constraint.Name, err)
 		}
 
@@ -247,14 +247,14 @@ func CreateProviderFromConstraint(namespace *corev1.Namespace, constraint *secur
 		constraint.SELinuxContext.SELinuxOptions.Level = level
 	}
 	if requiresPreallocatedFSGroup(constraint) {
-		fsGroup, err := getPreallocatedFSGroup(namespace)
+		fsGroup, err := GetPreallocatedFSGroup(namespace)
 		if err != nil {
 			return nil, fmt.Errorf("unable to find pre-allocated group annotation for namespace %s while trying to configure SCC %s: %v", namespace.Name, constraint.Name, err)
 		}
 		constraint.FSGroup.Ranges = fsGroup
 	}
 	if requiresPreallocatedSupplementalGroups(constraint) {
-		supplementalGroups, err := getPreallocatedSupplementalGroups(namespace)
+		supplementalGroups, err := GetPreallocatedSupplementalGroups(namespace)
 		if err != nil {
 			return nil, fmt.Errorf("unable to find pre-allocated group annotation for namespace %s while trying to configure SCC %s: %v", namespace.Name, constraint.Name, err)
 		}
@@ -269,9 +269,9 @@ func CreateProviderFromConstraint(namespace *corev1.Namespace, constraint *secur
 	return provider, nil
 }
 
-// getPreallocatedUIDRange retrieves the annotated value from the namespace, splits it to make
+// GetPreallocatedUIDRange retrieves the annotated value from the namespace, splits it to make
 // the min/max and formats the data into the necessary types for the strategy options.
-func getPreallocatedUIDRange(ns *corev1.Namespace) (*int64, *int64, error) {
+func GetPreallocatedUIDRange(ns *corev1.Namespace) (*int64, *int64, error) {
 	annotationVal, ok := ns.Annotations[securityv1.UIDRangeAnnotation]
 	if !ok {
 		return nil, nil, fmt.Errorf("unable to find annotation %s", securityv1.UIDRangeAnnotation)
@@ -290,8 +290,8 @@ func getPreallocatedUIDRange(ns *corev1.Namespace) (*int64, *int64, error) {
 	return &min, &max, nil
 }
 
-// getPreallocatedLevel gets the annotated value from the namespace.
-func getPreallocatedLevel(ns *corev1.Namespace) (string, error) {
+// GetPreallocatedLevel gets the annotated value from the namespace.
+func GetPreallocatedLevel(ns *corev1.Namespace) (string, error) {
 	level, ok := ns.Annotations[securityv1.MCSAnnotation]
 	if !ok {
 		return "", fmt.Errorf("unable to find annotation %s", securityv1.MCSAnnotation)
@@ -303,10 +303,10 @@ func getPreallocatedLevel(ns *corev1.Namespace) (string, error) {
 	return level, nil
 }
 
-// getSupplementalGroupsAnnotation provides a backwards compatible way to get supplemental groups
+// GetSupplementalGroupsAnnotation provides a backwards compatible way to get supplemental groups
 // annotations from a namespace by looking for SupplementalGroupsAnnotation and falling back to
 // UIDRangeAnnotation if it is not found.
-func getSupplementalGroupsAnnotation(ns *corev1.Namespace) (string, error) {
+func GetSupplementalGroupsAnnotation(ns *corev1.Namespace) (string, error) {
 	groups, ok := ns.Annotations[securityv1.SupplementalGroupsAnnotation]
 	if !ok {
 		klog.V(4).Infof("unable to find supplemental group annotation %s falling back to %s", securityv1.SupplementalGroupsAnnotation, securityv1.UIDRangeAnnotation)
@@ -323,9 +323,9 @@ func getSupplementalGroupsAnnotation(ns *corev1.Namespace) (string, error) {
 	return groups, nil
 }
 
-// getPreallocatedFSGroup gets the annotated value from the namespace.
-func getPreallocatedFSGroup(ns *corev1.Namespace) ([]securityv1.IDRange, error) {
-	groups, err := getSupplementalGroupsAnnotation(ns)
+// GetPreallocatedFSGroup gets the annotated value from the namespace.
+func GetPreallocatedFSGroup(ns *corev1.Namespace) ([]securityv1.IDRange, error) {
+	groups, err := GetSupplementalGroupsAnnotation(ns)
 	if err != nil {
 		return nil, err
 	}
@@ -343,9 +343,9 @@ func getPreallocatedFSGroup(ns *corev1.Namespace) ([]securityv1.IDRange, error) 
 	}, nil
 }
 
-// getPreallocatedSupplementalGroups gets the annotated value from the namespace.
-func getPreallocatedSupplementalGroups(ns *corev1.Namespace) ([]securityv1.IDRange, error) {
-	groups, err := getSupplementalGroupsAnnotation(ns)
+// GetPreallocatedSupplementalGroups gets the annotated value from the namespace.
+func GetPreallocatedSupplementalGroups(ns *corev1.Namespace) ([]securityv1.IDRange, error) {
+	groups, err := GetSupplementalGroupsAnnotation(ns)
 	if err != nil {
 		return nil, err
 	}

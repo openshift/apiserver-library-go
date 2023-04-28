@@ -449,7 +449,7 @@ func TestGetPreallocatedFSGroup(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		ranges, err := getPreallocatedFSGroup(v.ns)
+		ranges, err := GetPreallocatedFSGroup(v.ns)
 		if v.shouldFail && err == nil {
 			t.Errorf("%s was expected to fail but received no error and ranges %v", k, ranges)
 			continue
@@ -525,7 +525,7 @@ func TestGetPreallocatedSupplementalGroups(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		ranges, err := getPreallocatedSupplementalGroups(v.ns)
+		ranges, err := GetPreallocatedSupplementalGroups(v.ns)
 		if v.shouldFail && err == nil {
 			t.Errorf("%s was expected to fail but received no error and ranges %v", k, ranges)
 			continue
