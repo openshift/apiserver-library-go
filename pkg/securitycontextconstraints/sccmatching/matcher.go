@@ -3,12 +3,10 @@ package sccmatching
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -19,52 +17,13 @@ import (
 
 	"github.com/openshift/api/security"
 	securityv1 "github.com/openshift/api/security/v1"
-	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
 	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 	"github.com/openshift/library-go/pkg/security/uid"
 )
 
-type SCCMatcher interface {
-	FindApplicableSCCs(ctx context.Context, namespace string, user ...user.Info) ([]*securityv1.SecurityContextConstraints, error)
-}
-
 type defaultSCCMatcher struct {
 	cache      securityv1listers.SecurityContextConstraintsLister
 	authorizer authorizer.Authorizer
-}
-
-func NewDefaultSCCMatcher(c securityv1listers.SecurityContextConstraintsLister, authorizer authorizer.Authorizer) SCCMatcher {
-	return &defaultSCCMatcher{cache: c, authorizer: authorizer}
-}
-
-// FindApplicableSCCs implements SCCMatcher interface
-// It finds all SCCs that the subjects in the `users` argument may use for the given `namespace`.
-// If `users` is omitted, `namespace` is ignored.
-// The returned SCCs are sorted by priority.
-func (d *defaultSCCMatcher) FindApplicableSCCs(ctx context.Context, namespace string, users ...user.Info) ([]*securityv1.SecurityContextConstraints, error) {
-	var matchedConstraints []*securityv1.SecurityContextConstraints
-	constraints, err := d.cache.List(labels.Everything())
-	if err != nil {
-		return nil, err
-	}
-
-	// filter out SCCs if we got some users, leave as is if not
-	if len(users) == 0 {
-		matchedConstraints = constraints
-	} else {
-		for _, constraint := range constraints {
-			for _, user := range users {
-				if ConstraintAppliesTo(ctx, constraint.Name, constraint.Users, constraint.Groups, user, namespace, d.authorizer) {
-					matchedConstraints = append(matchedConstraints, constraint)
-					break
-				}
-			}
-		}
-	}
-
-	sort.Sort(sccsort.ByPriority(matchedConstraints))
-
-	return matchedConstraints, nil
 }
 
 // authorizedForSCC returns true if info is authorized to perform the "use" verb on the SCC resource.
