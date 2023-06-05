@@ -807,12 +807,14 @@ k8s.io/kubernetes/pkg/apis/autoscaling
 k8s.io/kubernetes/pkg/apis/batch
 k8s.io/kubernetes/pkg/apis/core
 k8s.io/kubernetes/pkg/apis/core/helper
+k8s.io/kubernetes/pkg/apis/core/pods
 k8s.io/kubernetes/pkg/apis/core/v1
 k8s.io/kubernetes/pkg/apis/core/v1/helper
 k8s.io/kubernetes/pkg/apis/core/v1/helper/qos
 k8s.io/kubernetes/pkg/apis/rbac
 k8s.io/kubernetes/pkg/apis/rbac/v1
 k8s.io/kubernetes/pkg/features
+k8s.io/kubernetes/pkg/fieldpath
 k8s.io/kubernetes/pkg/quota/v1/evaluator/core
 k8s.io/kubernetes/pkg/quota/v1/install
 k8s.io/kubernetes/pkg/registry/rbac
@@ -868,3 +870,4 @@ sigs.k8s.io/yaml
 # k8s.io/mount-utils => k8s.io/mount-utils v0.23.0
 # k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.23.0
 # k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.23.0
+# vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
