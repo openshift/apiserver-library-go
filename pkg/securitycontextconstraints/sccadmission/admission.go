@@ -88,6 +88,15 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 	}
 	pod := a.GetObject().(*coreapi.Pod)
 
+	// deny changes to required SCC annotation during updates
+	if a.GetOperation() == admission.Update {
+		oldPod := a.GetOldObject().(*coreapi.Pod)
+
+		if pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] != oldPod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] {
+			return admission.NewForbidden(a, fmt.Errorf("invalid change of required security context constraint annotation: %v", securityv1.RequiredSCCAnnotation))
+		}
+	}
+
 	// TODO(liggitt): allow spec mutation during initializing updates?
 	specMutationAllowed := a.GetOperation() == admission.Create
 	ephemeralContainersMutationAllowed := specMutationAllowed || (a.GetOperation() == admission.Update && a.GetSubresource() == "ephemeralcontainers")

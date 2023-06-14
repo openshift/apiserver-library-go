@@ -1163,8 +1163,18 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
 
+	simplePodRequiringNotMutatingSCC := simplePod.DeepCopy()
+	simplePodRequiringNotMutatingSCC.Annotations = map[string]string{
+		securityv1.RequiredSCCAnnotation: nonMutatingSCC.Name,
+	}
+
 	modifiedPod := simplePod.DeepCopy()
 	modifiedPod.Spec.Containers[0].Image = "test-image:0.2"
+
+	modifiedPodRequiringMutatingSCC := modifiedPod.DeepCopy()
+	modifiedPodRequiringMutatingSCC.Annotations = map[string]string{
+		securityv1.RequiredSCCAnnotation: mutatingSCC.Name,
+	}
 
 	modifiedByEphemeralContainers := simplePod.DeepCopy()
 	modifiedByEphemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
@@ -1280,6 +1290,20 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			subresource: "ephemeralcontainers",
 			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC},
 			shouldPass:  false,
+		},
+		"updating: changing required SCC must fail": {
+			oldPod:     simplePodRequiringNotMutatingSCC.DeepCopy(),
+			newPod:     modifiedPodRequiringMutatingSCC.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass: false,
+		},
+		"updating: adding required SCC must fail": {
+			oldPod:     simplePod.DeepCopy(),
+			newPod:     modifiedPodRequiringMutatingSCC.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass: false,
 		},
 	}
 
