@@ -44,5 +44,5 @@ replace (
 	k8s.io/mount-utils => k8s.io/mount-utils v0.23.0
 	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.23.0
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.23.0
-
+	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
