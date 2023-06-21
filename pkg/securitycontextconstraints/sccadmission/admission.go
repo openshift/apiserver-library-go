@@ -213,20 +213,14 @@ func (c *constraint) computeSecurityContext(
 		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly"))
 	}
 
-	constraints, err := sccmatching.NewDefaultSCCMatcher(c.sccLister, nil).FindApplicableSCCs(ctx, a.GetNamespace())
+	constraints, err := c.sccLister.List(labels.Everything())
 	if err != nil {
 		return nil, "", nil, admission.NewForbidden(a, err)
 	}
 	if len(constraints) == 0 {
-		sccs, err := c.sccLister.List(labels.Everything())
-		if err != nil {
-			return nil, "", nil, admission.NewForbidden(a, err)
-		}
-		if len(sccs) == 0 {
-			return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
-		}
-		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in namespace %s", a.GetNamespace()))
+		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
 	}
+	sort.Sort(sccsort.ByPriority(constraints))
 
 	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
 	// Keep the order the same for everything else
