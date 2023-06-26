@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
@@ -25,7 +26,7 @@ func TestMustRunAsOptions(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		_, err := NewMustRunAs(v.ranges, "")
+		_, err := NewMustRunAs(v.ranges, "", func(securitycontext.PodSecurityContextAccessor) []int64 { return nil })
 		if v.pass && err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
@@ -62,7 +63,7 @@ func TestGenerate(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		s, err := NewMustRunAs(v.ranges, "")
+		s, err := NewMustRunAs(v.ranges, "", func(securitycontext.PodSecurityContextAccessor) []int64 { return nil })
 		if err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
@@ -148,11 +149,11 @@ func TestValidate(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		s, err := NewMustRunAs(v.ranges, "")
+		s, err := NewMustRunAs(v.ranges, "", func(_ securitycontext.PodSecurityContextAccessor) []int64 { return v.groups })
 		if err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
-		errs := s.Validate(nil, nil, v.groups)
+		errs := s.ValidatePod(nil, securitycontext.NewPodSecurityContextAccessor(nil))
 		if v.pass && len(errs) > 0 {
 			t.Errorf("unexpected errors for %s: %v", k, errs)
 		}

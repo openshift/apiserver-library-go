@@ -75,11 +75,13 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	if err != nil {
 		return nil, err
 	}
+	provider.podValidators = append(provider.podValidators, provider.fsGroupStrategy)
 
 	provider.supplementalGroupStrategy, err = createSupplementalGroupStrategy(&scc.SupplementalGroups)
 	if err != nil {
 		return nil, err
 	}
+	provider.podValidators = append(provider.podValidators, provider.supplementalGroupStrategy)
 
 	provider.capabilitiesStrategy, err = createCapabilitiesStrategy(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
@@ -266,12 +268,6 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 		allErrs = append(allErrs, validator.ValidatePod(fldPath, sc)...)
 	}
 
-	fsGroups := []int64{}
-	if fsGroup := sc.FSGroup(); fsGroup != nil {
-		fsGroups = append(fsGroups, *fsGroup)
-	}
-	allErrs = append(allErrs, s.fsGroupStrategy.Validate(fldPath, pod, fsGroups)...)
-	allErrs = append(allErrs, s.supplementalGroupStrategy.Validate(fldPath, pod, sc.SupplementalGroups())...)
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
 
 	if !s.scc.AllowHostNetwork && sc.HostNetwork() {
@@ -425,10 +421,17 @@ func createFSGroupStrategy(opts *securityv1.FSGroupStrategyOptions) (group.Group
 	case securityv1.FSGroupStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.FSGroupStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, fsGroupField)
+		return group.NewMustRunAs(opts.Ranges, fsGroupField, getFSGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized FSGroup strategy type %s", opts.Type)
 	}
+}
+
+func getFSGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
+	if fsGroup := podSC.FSGroup(); fsGroup != nil {
+		return []int64{*fsGroup}
+	}
+	return nil
 }
 
 // createSupplementalGroupStrategy creates a new supplemental group strategy
@@ -437,10 +440,15 @@ func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategy
 	case securityv1.SupplementalGroupsStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.SupplementalGroupsStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField)
+		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField, getSupplementalGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized SupplementalGroups strategy type %s", opts.Type)
 	}
+}
+
+func getSupplementalGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
+	return podSC.SupplementalGroups()
+
 }
 
 // createCapabilitiesStrategy creates a new capabilities strategy.

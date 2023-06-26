@@ -5,26 +5,35 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
 
 // mustRunAs implements the GroupSecurityContextConstraintsStrategy interface
 type mustRunAs struct {
-	ranges []securityv1.IDRange
-	field  string
+	ranges        []securityv1.IDRange
+	field         string
+	groupAccessor GroupAccessorFunc
 }
 
 var _ GroupSecurityContextConstraintsStrategy = &mustRunAs{}
 
+type GroupAccessorFunc func(securitycontext.PodSecurityContextAccessor) []int64
+
 // NewMustRunAs provides a new MustRunAs strategy based on ranges.
-func NewMustRunAs(ranges []securityv1.IDRange, field string) (GroupSecurityContextConstraintsStrategy, error) {
+func NewMustRunAs(ranges []securityv1.IDRange, field string, groupAccessor GroupAccessorFunc) (GroupSecurityContextConstraintsStrategy, error) {
+	if groupAccessor == nil {
+		return nil, fmt.Errorf("function describing accessing groups is required")
+	}
+
 	if len(ranges) == 0 {
 		return nil, fmt.Errorf("ranges must be supplied for MustRunAs")
 	}
 	return &mustRunAs{
-		ranges: ranges,
-		field:  field,
+		ranges:        ranges,
+		field:         field,
+		groupAccessor: groupAccessor,
 	}, nil
 }
 
@@ -45,8 +54,9 @@ func (s *mustRunAs) GenerateSingle(_ *api.Pod) (*int64, error) {
 // Validate ensures that the specified values fall within the range of the strategy.
 // Groups are passed in here to allow this strategy to support multiple group fields (fsgroup and
 // supplemental groups).
-func (s *mustRunAs) Validate(fldPath *field.Path, _ *api.Pod, groups []int64) field.ErrorList {
+func (s *mustRunAs) ValidatePod(fldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList {
 	allErrs := field.ErrorList{}
+	groups := s.groupAccessor(podSC)
 
 	if len(groups) == 0 && len(s.ranges) > 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child(s.field), groups, "unable to validate empty groups against required ranges"))

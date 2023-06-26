@@ -3,6 +3,7 @@ package group
 import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 )
 
 // GroupSecurityContextConstraintsStrategy defines the interface for all group constraint strategies.
@@ -15,5 +16,5 @@ type GroupSecurityContextConstraintsStrategy interface {
 	// value to return if configured with multiple ranges.  This is used for FSGroup.
 	GenerateSingle(pod *api.Pod) (*int64, error)
 	// Validate ensures that the specified values fall within the range of the strategy.
-	Validate(fldPath *field.Path, pod *api.Pod, groups []int64) field.ErrorList
+	ValidatePod(fldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList
 }
