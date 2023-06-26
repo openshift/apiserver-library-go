@@ -11,6 +11,7 @@ import (
 	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
+	sccapi "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/api"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/capabilities"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/group"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/seccomp"
@@ -38,6 +39,8 @@ type simpleProvider struct {
 	capabilitiesStrategy      capabilities.CapabilitiesSecurityContextConstraintsStrategy
 	seccompStrategy           seccomp.SeccompStrategy
 	sysctlsStrategy           sysctl.SysctlsStrategy
+
+	containerValidators []sccapi.ContainerSecurityValidator
 }
 
 // ensure we implement the interface correctly.
@@ -46,54 +49,51 @@ var _ SecurityContextConstraintsProvider = &simpleProvider{}
 // NewSimpleProvider creates a new SecurityContextConstraintsProvider instance.
 func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityContextConstraintsProvider, error) {
 	if scc == nil {
-		return nil, fmt.Errorf("NewSimpleProvider requires a SecurityContextConstraints")
+		return nil, fmt.Errorf("NewSimpleProvider requires a SecurityContextConstraint")
 	}
 
-	userStrat, err := createUserStrategy(&scc.RunAsUser)
+	var err error
+	provider := &simpleProvider{
+		scc: scc,
+	}
+
+	provider.runAsUserStrategy, err = user.CreateUserStrategy(&scc.RunAsUser)
+	if err != nil {
+		return nil, err
+	}
+	provider.containerValidators = append(provider.containerValidators, provider.runAsUserStrategy)
+
+	provider.seLinuxStrategy, err = createSELinuxStrategy(&scc.SELinuxContext)
 	if err != nil {
 		return nil, err
 	}
 
-	seLinuxStrat, err := createSELinuxStrategy(&scc.SELinuxContext)
+	provider.fsGroupStrategy, err = createFSGroupStrategy(&scc.FSGroup)
 	if err != nil {
 		return nil, err
 	}
 
-	fsGroupStrat, err := createFSGroupStrategy(&scc.FSGroup)
+	provider.supplementalGroupStrategy, err = createSupplementalGroupStrategy(&scc.SupplementalGroups)
 	if err != nil {
 		return nil, err
 	}
 
-	supGroupStrat, err := createSupplementalGroupStrategy(&scc.SupplementalGroups)
+	provider.capabilitiesStrategy, err = createCapabilitiesStrategy(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
 		return nil, err
 	}
 
-	capStrat, err := createCapabilitiesStrategy(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
+	provider.seccompStrategy, err = createSeccompStrategy(scc.SeccompProfiles)
 	if err != nil {
 		return nil, err
 	}
 
-	seccompStrat, err := createSeccompStrategy(scc.SeccompProfiles)
+	provider.sysctlsStrategy, err = createSysctlsStrategy(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
 	if err != nil {
 		return nil, err
 	}
 
-	sysctlsStrat, err := createSysctlsStrategy(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
-	if err != nil {
-		return nil, err
-	}
-
-	return &simpleProvider{
-		scc:                       scc,
-		runAsUserStrategy:         userStrat,
-		seLinuxStrategy:           seLinuxStrat,
-		fsGroupStrategy:           fsGroupStrat,
-		supplementalGroupStrategy: supGroupStrat,
-		capabilitiesStrategy:      capStrat,
-		seccompStrategy:           seccompStrat,
-		sysctlsStrategy:           sysctlsStrat,
-	}, nil
+	return provider, nil
 }
 
 // Create a PodSecurityContext based on the given constraints.  If a setting is already set
@@ -332,7 +332,9 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 	podSC := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
 	sc := securitycontext.NewEffectiveContainerSecurityContextAccessor(podSC, securitycontext.NewContainerSecurityContextMutator(container.SecurityContext))
 
-	allErrs = append(allErrs, s.runAsUserStrategy.Validate(fldPath, pod, container, sc.RunAsNonRoot(), sc.RunAsUser())...)
+	for _, validator := range s.containerValidators {
+		allErrs = append(allErrs, validator.ValidateContainer(fldPath, sc)...)
+	}
 	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, container, sc.SELinuxOptions())...)
 	allErrs = append(allErrs, s.seccompStrategy.ValidateContainer(pod, container)...)
 
@@ -411,22 +413,6 @@ func (s *simpleProvider) GetSCCUsers() []string {
 
 func (s *simpleProvider) GetSCCGroups() []string {
 	return s.scc.Groups
-}
-
-// createUserStrategy creates a new user strategy.
-func createUserStrategy(opts *securityv1.RunAsUserStrategyOptions) (user.RunAsUserSecurityContextConstraintsStrategy, error) {
-	switch opts.Type {
-	case securityv1.RunAsUserStrategyMustRunAs:
-		return user.NewMustRunAs(opts)
-	case securityv1.RunAsUserStrategyMustRunAsRange:
-		return user.NewMustRunAsRange(opts)
-	case securityv1.RunAsUserStrategyMustRunAsNonRoot:
-		return user.NewRunAsNonRoot(opts)
-	case securityv1.RunAsUserStrategyRunAsAny:
-		return user.NewRunAsAny(opts)
-	default:
-		return nil, fmt.Errorf("Unrecognized RunAsUser strategy type %s", opts.Type)
-	}
 }
 
 // createSELinuxStrategy creates a new selinux strategy.

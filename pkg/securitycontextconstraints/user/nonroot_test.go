@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	securityv1 "github.com/openshift/api/security/v1"
+	"k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 )
 
 func TestNonRootOptions(t *testing.T) {
@@ -40,7 +42,7 @@ func TestNonRootValidate(t *testing.T) {
 		t.Fatalf("unexpected error initializing NewRunAsNonRoot %v", err)
 	}
 
-	errs := s.Validate(nil, nil, nil, nil, &badUID)
+	errs := s.ValidateContainer(nil, accessorForUser(nil, &badUID))
 	expectedMessage := "runAsUser: Invalid value: 0: running with the root UID is forbidden"
 	if len(errs) == 0 {
 		t.Errorf("expected errors from root uid but got none")
@@ -48,7 +50,7 @@ func TestNonRootValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = s.Validate(nil, nil, nil, nil, nil)
+	errs = s.ValidateContainer(nil, accessorForUser(nil, nil))
 	expectedMessage = "runAsNonRoot: Required value: must be true"
 	if len(errs) == 0 {
 		t.Errorf("expected error when neither runAsUser nor runAsNonRoot are specified but got none")
@@ -57,7 +59,7 @@ func TestNonRootValidate(t *testing.T) {
 	}
 
 	no := false
-	errs = s.Validate(nil, nil, nil, &no, nil)
+	errs = s.ValidateContainer(nil, accessorForUser(&no, nil))
 	expectedMessage = "runAsNonRoot: Invalid value: false: must be true"
 	if len(errs) == 0 {
 		t.Errorf("expected error when runAsNonRoot is false but got none")
@@ -65,14 +67,23 @@ func TestNonRootValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = s.Validate(nil, nil, nil, nil, &uid)
+	errs = s.ValidateContainer(nil, accessorForUser(nil, &uid))
 	if len(errs) != 0 {
 		t.Errorf("expected no errors from non-root uid but got %v", errs)
 	}
 
 	yes := true
-	errs = s.Validate(nil, nil, nil, &yes, nil)
+	errs = s.ValidateContainer(nil, accessorForUser(&yes, nil))
 	if len(errs) != 0 {
 		t.Errorf("expected no errors from nil uid but got %v", errs)
 	}
+}
+
+func accessorForUser(runAsNonRoot *bool, runAsUser *int64) securitycontext.ContainerSecurityContextAccessor {
+	return securitycontext.NewContainerSecurityContextAccessor(
+		&core.SecurityContext{
+			RunAsUser:    runAsUser,
+			RunAsNonRoot: runAsNonRoot,
+		},
+	)
 }

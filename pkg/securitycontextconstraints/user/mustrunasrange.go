@@ -5,13 +5,14 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
 
 // mustRunAsRange implements the RunAsUserSecurityContextConstraintsStrategy interface
 type mustRunAsRange struct {
-	opts *securityv1.RunAsUserStrategyOptions
+	UIDRangeMin, UIDRangeMax int64
 }
 
 var _ RunAsUserSecurityContextConstraintsStrategy = &mustRunAsRange{}
@@ -28,26 +29,29 @@ func NewMustRunAsRange(options *securityv1.RunAsUserStrategyOptions) (RunAsUserS
 		return nil, fmt.Errorf("MustRunAsRange requires a UIDRangeMax")
 	}
 	return &mustRunAsRange{
-		opts: options,
+		UIDRangeMin: *options.UIDRangeMin,
+		UIDRangeMax: *options.UIDRangeMax,
 	}, nil
 }
 
 // Generate creates the uid based on policy rules.  MustRunAs returns the UIDRangeMin it is initialized with.
 func (s *mustRunAsRange) Generate(pod *api.Pod, container *api.Container) (*int64, error) {
-	return s.opts.UIDRangeMin, nil
+	uid := s.UIDRangeMin
+	return &uid, nil
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.
-func (s *mustRunAsRange) Validate(fldPath *field.Path, _ *api.Pod, _ *api.Container, runAsNonRoot *bool, runAsUser *int64) field.ErrorList {
+func (s *mustRunAsRange) ValidateContainer(fldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
 	allErrs := field.ErrorList{}
+	runAsUser := sc.RunAsUser()
 
 	if runAsUser == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("runAsUser"), ""))
 		return allErrs
 	}
 
-	if *runAsUser < *s.opts.UIDRangeMin || *runAsUser > *s.opts.UIDRangeMax {
-		detail := fmt.Sprintf("must be in the ranges: [%v, %v]", *s.opts.UIDRangeMin, *s.opts.UIDRangeMax)
+	if *runAsUser < s.UIDRangeMin || *runAsUser > s.UIDRangeMax {
+		detail := fmt.Sprintf("must be in the ranges: [%v, %v]", s.UIDRangeMin, s.UIDRangeMax)
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("runAsUser"), *runAsUser, detail))
 		return allErrs
 	}

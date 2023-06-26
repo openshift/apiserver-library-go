@@ -59,7 +59,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Fatalf("unexpected error initializing NewMustRunAs %v", err)
 	}
 
-	errs := mustRunAs.Validate(nil, nil, nil, nil, nil)
+	errs := mustRunAs.ValidateContainer(nil, accessorForUser(nil, nil))
 	expectedMessage := "runAsUser: Required value"
 	if len(errs) == 0 {
 		t.Errorf("expected errors from nil runAsUser but got none")
@@ -67,7 +67,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = mustRunAs.Validate(nil, nil, nil, nil, &badUID)
+	errs = mustRunAs.ValidateContainer(nil, accessorForUser(nil, &badUID))
 	expectedMessage = fmt.Sprintf("runAsUser: Invalid value: %d: must be: %d", badUID, uid)
 	if len(errs) == 0 {
 		t.Errorf("expected errors from mismatch uid but got none")
@@ -75,7 +75,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = mustRunAs.Validate(nil, nil, nil, nil, &uid)
+	errs = mustRunAs.ValidateContainer(nil, accessorForUser(nil, &uid))
 	if len(errs) != 0 {
 		t.Errorf("expected no errors from matching uid but got %v", errs)
 	}

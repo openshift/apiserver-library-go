@@ -3,6 +3,7 @@ package user
 import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
@@ -25,8 +26,11 @@ func (s *nonRoot) Generate(pod *api.Pod, container *api.Container) (*int64, erro
 // of this will pass if either the UID is not set, assuming that the image will provided the UID
 // or if the UID is set it is not root.  In order to work properly this assumes that the kubelet
 // will populate an
-func (s *nonRoot) Validate(fldPath *field.Path, _ *api.Pod, _ *api.Container, runAsNonRoot *bool, runAsUser *int64) field.ErrorList {
+func (s *nonRoot) ValidateContainer(fldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
 	allErrs := field.ErrorList{}
+	runAsNonRoot := sc.RunAsNonRoot()
+	runAsUser := sc.RunAsUser()
+
 	if runAsNonRoot == nil && runAsUser == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("runAsNonRoot"), "must be true"))
 		return allErrs
