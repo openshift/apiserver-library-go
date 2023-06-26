@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
@@ -35,29 +36,39 @@ func (s *mustRunAs) Generate(_ *coreapi.Pod, _ *coreapi.Container) (*coreapi.SEL
 	return ToInternalSELinuxOptions(s.opts.SELinuxOptions)
 }
 
+func (s *mustRunAs) ValidatePod(fldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList {
+	return s.validate(fldPath, podSC.SELinuxOptions())
+}
+
+func (s *mustRunAs) ValidateContainer(fldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
+	return s.validate(fldPath, sc.SELinuxOptions())
+}
+
 // Validate ensures that the specified values fall within the range of the strategy.
-func (s *mustRunAs) Validate(fldPath *field.Path, _ *coreapi.Pod, _ *coreapi.Container, seLinux *coreapi.SELinuxOptions) field.ErrorList {
+func (s *mustRunAs) validate(fldPath *field.Path, seLinux *coreapi.SELinuxOptions) field.ErrorList {
 	allErrs := field.ErrorList{}
 
+	seLinuxField := fldPath.Child("seLinuxOptions")
+
 	if seLinux == nil {
-		allErrs = append(allErrs, field.Required(fldPath, ""))
+		allErrs = append(allErrs, field.Required(seLinuxField, ""))
 		return allErrs
 	}
 	if !equalLevels(s.opts.SELinuxOptions.Level, seLinux.Level) {
 		detail := fmt.Sprintf("must be %s", s.opts.SELinuxOptions.Level)
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("level"), seLinux.Level, detail))
+		allErrs = append(allErrs, field.Invalid(seLinuxField.Child("level"), seLinux.Level, detail))
 	}
 	if seLinux.Role != s.opts.SELinuxOptions.Role {
 		detail := fmt.Sprintf("must be %s", s.opts.SELinuxOptions.Role)
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("role"), seLinux.Role, detail))
+		allErrs = append(allErrs, field.Invalid(seLinuxField.Child("role"), seLinux.Role, detail))
 	}
 	if seLinux.Type != s.opts.SELinuxOptions.Type {
 		detail := fmt.Sprintf("must be %s", s.opts.SELinuxOptions.Type)
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("type"), seLinux.Type, detail))
+		allErrs = append(allErrs, field.Invalid(seLinuxField.Child("type"), seLinux.Type, detail))
 	}
 	if seLinux.User != s.opts.SELinuxOptions.User {
 		detail := fmt.Sprintf("must be %s", s.opts.SELinuxOptions.User)
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("user"), seLinux.User, detail))
+		allErrs = append(allErrs, field.Invalid(seLinuxField.Child("user"), seLinux.User, detail))
 	}
 
 	return allErrs

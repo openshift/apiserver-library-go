@@ -41,6 +41,7 @@ type simpleProvider struct {
 	sysctlsStrategy           sysctl.SysctlsStrategy
 
 	containerValidators []sccapi.ContainerSecurityValidator
+	podValidators       []sccapi.PodSecurityValidator
 }
 
 // ensure we implement the interface correctly.
@@ -63,10 +64,12 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	}
 	provider.containerValidators = append(provider.containerValidators, provider.runAsUserStrategy)
 
-	provider.seLinuxStrategy, err = createSELinuxStrategy(&scc.SELinuxContext)
+	provider.seLinuxStrategy, err = selinux.CreateSELinuxStrategy(&scc.SELinuxContext)
 	if err != nil {
 		return nil, err
 	}
+	provider.podValidators = append(provider.podValidators, provider.seLinuxStrategy)
+	provider.containerValidators = append(provider.containerValidators, provider.seLinuxStrategy)
 
 	provider.fsGroupStrategy, err = createFSGroupStrategy(&scc.FSGroup)
 	if err != nil {
@@ -259,6 +262,10 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 
 	sc := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
 
+	for _, validator := range s.podValidators {
+		allErrs = append(allErrs, validator.ValidatePod(fldPath, sc)...)
+	}
+
 	fsGroups := []int64{}
 	if fsGroup := sc.FSGroup(); fsGroup != nil {
 		fsGroups = append(fsGroups, *fsGroup)
@@ -266,8 +273,6 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 	allErrs = append(allErrs, s.fsGroupStrategy.Validate(fldPath, pod, fsGroups)...)
 	allErrs = append(allErrs, s.supplementalGroupStrategy.Validate(fldPath, pod, sc.SupplementalGroups())...)
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
-
-	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, nil, sc.SELinuxOptions())...)
 
 	if !s.scc.AllowHostNetwork && sc.HostNetwork() {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), sc.HostNetwork(), "Host network is not allowed to be used"))
@@ -335,7 +340,6 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 	for _, validator := range s.containerValidators {
 		allErrs = append(allErrs, validator.ValidateContainer(fldPath, sc)...)
 	}
-	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, container, sc.SELinuxOptions())...)
 	allErrs = append(allErrs, s.seccompStrategy.ValidateContainer(pod, container)...)
 
 	privileged := sc.Privileged()
@@ -413,18 +417,6 @@ func (s *simpleProvider) GetSCCUsers() []string {
 
 func (s *simpleProvider) GetSCCGroups() []string {
 	return s.scc.Groups
-}
-
-// createSELinuxStrategy creates a new selinux strategy.
-func createSELinuxStrategy(opts *securityv1.SELinuxContextStrategyOptions) (selinux.SELinuxSecurityContextConstraintsStrategy, error) {
-	switch opts.Type {
-	case securityv1.SELinuxStrategyMustRunAs:
-		return selinux.NewMustRunAs(opts)
-	case securityv1.SELinuxStrategyRunAsAny:
-		return selinux.NewRunAsAny(opts)
-	default:
-		return nil, fmt.Errorf("Unrecognized SELinuxContext strategy type %s", opts.Type)
-	}
 }
 
 // createFSGroupStrategy creates a new fsgroup strategy

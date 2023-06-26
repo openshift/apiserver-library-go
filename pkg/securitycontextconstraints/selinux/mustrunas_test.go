@@ -137,7 +137,7 @@ func TestMustRunAsValidate(t *testing.T) {
 			continue
 		}
 
-		errs := mustRunAs.Validate(nil, nil, nil, tc.podSeLinux)
+		errs := mustRunAs.ValidateContainer(nil, containerAccessorForSELinuxOpts(tc.podSeLinux, nil))
 		//should've passed but didn't
 		if len(tc.expectedMsg) == 0 && len(errs) > 0 {
 			t.Errorf("%s expected no errors but received %v", name, errs)
