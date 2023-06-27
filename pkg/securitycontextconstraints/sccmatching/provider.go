@@ -42,6 +42,9 @@ type simpleProvider struct {
 
 	podValidators       []sccapi.PodSecurityValidator
 	containerValidators []sccapi.ContainerSecurityValidator
+
+	podMutators       []sccapi.PodSecurityMutator
+	containerMutators []sccapi.ContainerSecurityMutator
 }
 
 // ensure we implement the interface correctly.
@@ -115,13 +118,10 @@ func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
 	errs := field.ErrorList{}
 
 	fldPath := field.NewPath("spec")
-	psc, generatedAnnotations, err := s.createPodSecurityContext(pod)
-	if err != nil {
+	if err := s.mutatePod(pod); err != nil {
 		errs = append(errs, field.Invalid(fldPath.Child("securityContext"), pod.Spec.SecurityContext, err.Error()))
 	}
 
-	pod.Spec.SecurityContext = psc
-	pod.Annotations = generatedAnnotations
 	errs = append(errs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
 
 	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
@@ -138,7 +138,7 @@ func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
 
 func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
 	errs := field.ErrorList{}
-	sc, err := s.createContainerSecurityContext(pod, container)
+	sc, err := s.mutateContainer(pod, container)
 	if err != nil {
 		errs = append(errs, field.Invalid(fldPath, "", err.Error()))
 		return errs
@@ -156,15 +156,13 @@ func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container 
 // Create a PodSecurityContext based on the given constraints.  If a setting is already set
 // on the PodSecurityContext it will not be changed.  Validate should be used after the context
 // is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) createPodSecurityContext(pod *api.Pod) (*api.PodSecurityContext, map[string]string, error) {
+func (s *simpleProvider) mutatePod(pod *api.Pod) error {
 	sc := securitycontext.NewPodSecurityContextMutator(pod.Spec.SecurityContext)
-
-	annotationsCopy := copySS(pod.Annotations)
 
 	if sc.SupplementalGroups() == nil {
 		supGroups, err := s.supplementalGroupStrategy.Generate(pod)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		sc.SetSupplementalGroups(supGroups)
 	}
@@ -172,7 +170,7 @@ func (s *simpleProvider) createPodSecurityContext(pod *api.Pod) (*api.PodSecurit
 	if sc.FSGroup() == nil {
 		fsGroup, err := s.fsGroupStrategy.GenerateSingle(pod)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		sc.SetFSGroup(fsGroup)
 	}
@@ -180,7 +178,7 @@ func (s *simpleProvider) createPodSecurityContext(pod *api.Pod) (*api.PodSecurit
 	if sc.SELinuxOptions() == nil {
 		seLinux, err := s.seLinuxStrategy.Generate(pod, nil)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		sc.SetSELinuxOptions(seLinux)
 	}
@@ -189,23 +187,23 @@ func (s *simpleProvider) createPodSecurityContext(pod *api.Pod) (*api.PodSecurit
 	// container has a specific profile set then it will be caught in the validation step.
 	seccompProfile, err := s.seccompStrategy.Generate(pod.Annotations, pod)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	if seccompProfile != "" {
-		if annotationsCopy == nil {
-			annotationsCopy = map[string]string{}
+		if pod.Annotations == nil {
+			pod.Annotations = map[string]string{}
 		}
-		annotationsCopy[api.SeccompPodAnnotationKey] = seccompProfile
+		pod.Annotations[api.SeccompPodAnnotationKey] = seccompProfile
 		sc.SetSeccompProfile(seccompFieldForAnnotation(seccompProfile))
 	}
 
-	return sc.PodSecurityContext(), annotationsCopy, nil
+	return nil
 }
 
 // Create a SecurityContext based on the given constraints.  If a setting is already set on the
 // container's security context then it will not be changed.  Validation should be used after
 // the context is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) createContainerSecurityContext(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
+func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
 	sc := securitycontext.NewEffectiveContainerSecurityContextMutator(
 		securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
 		securitycontext.NewContainerSecurityContextMutator(container.SecurityContext),
@@ -495,16 +493,4 @@ func seccompFieldForAnnotation(annotation string) *api.SeccompProfile {
 	// we can only reach this code path if the localhostProfile name has a zero
 	// length or if the annotation has an unrecognized value
 	return nil
-}
-
-// CopySS makes a shallow copy of a map.
-func copySS(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	copy := make(map[string]string, len(m))
-	for k, v := range m {
-		copy[k] = v
-	}
-	return copy
 }
