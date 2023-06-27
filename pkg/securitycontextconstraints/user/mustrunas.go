@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
@@ -31,9 +30,14 @@ func NewMustRunAs(options *securityv1.RunAsUserStrategyOptions) (RunAsUserSecuri
 }
 
 // Generate creates the uid based on policy rules.  MustRunAs returns the UID it is initialized with.
-func (s *mustRunAs) Generate(pod *api.Pod, container *api.Container) (*int64, error) {
+func (s *mustRunAs) MutateContainer(sc securitycontext.ContainerSecurityContextMutator) error {
+	if sc.RunAsUser() != nil {
+		return nil
+	}
+
 	uid := s.requiredUID
-	return &uid, nil
+	sc.SetRunAsUser(&uid)
+	return nil
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.

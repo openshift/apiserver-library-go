@@ -25,8 +25,9 @@ func TestNonRootGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsNonRoot %v", err)
 	}
-	uid, err := s.Generate(nil, nil)
-	if uid != nil {
+	sc := mutatorForUser(nil, nil)
+	err = s.MutateContainer(sc)
+	if uid := sc.RunAsUser(); uid != nil {
 		t.Errorf("expected nil uid but got %d", *uid)
 	}
 	if err != nil {
@@ -81,6 +82,15 @@ func TestNonRootValidate(t *testing.T) {
 
 func accessorForUser(runAsNonRoot *bool, runAsUser *int64) securitycontext.ContainerSecurityContextAccessor {
 	return securitycontext.NewContainerSecurityContextAccessor(
+		&core.SecurityContext{
+			RunAsUser:    runAsUser,
+			RunAsNonRoot: runAsNonRoot,
+		},
+	)
+}
+
+func mutatorForUser(runAsNonRoot *bool, runAsUser *int64) securitycontext.ContainerSecurityContextMutator {
+	return securitycontext.NewContainerSecurityContextMutator(
 		&core.SecurityContext{
 			RunAsUser:    runAsUser,
 			RunAsNonRoot: runAsNonRoot,

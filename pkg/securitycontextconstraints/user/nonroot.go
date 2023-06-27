@@ -2,7 +2,6 @@ package user
 
 import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
@@ -18,8 +17,8 @@ func NewRunAsNonRoot(options *securityv1.RunAsUserStrategyOptions) (RunAsUserSec
 
 // Generate creates the uid based on policy rules.  This strategy does return a UID.  It assumes
 // that the user will specify a UID or the container image specifies a UID.
-func (s *nonRoot) Generate(pod *api.Pod, container *api.Container) (*int64, error) {
-	return nil, nil
+func (s *nonRoot) MutateContainer(sc securitycontext.ContainerSecurityContextMutator) error {
+	return nil
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.  Validation

@@ -22,8 +22,9 @@ func TestRunAsAnyGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsAny %v", err)
 	}
-	uid, err := s.Generate(nil, nil)
-	if uid != nil {
+	sc := mutatorForUser(nil, nil)
+	err = s.MutateContainer(sc)
+	if uid := sc.RunAsUser(); uid != nil {
 		t.Errorf("expected nil uid but got %d", *uid)
 	}
 	if err != nil {

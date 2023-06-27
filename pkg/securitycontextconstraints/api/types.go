@@ -14,6 +14,14 @@ type ContainerSecurityValidator interface {
 	ValidateContainer(*field.Path, securitycontext.ContainerSecurityContextAccessor) field.ErrorList
 }
 
+type ContainerSecurityMutator interface {
+	MutateContainer(securitycontext.ContainerSecurityContextMutator) error
+}
+
 type PodSecurityValidator interface {
 	ValidatePod(*field.Path, securitycontext.PodSecurityContextAccessor) field.ErrorList
+}
+
+type PodSecurityMutator interface {
+	MutatePod(securitycontext.PodSecurityContextMutator) error
 }

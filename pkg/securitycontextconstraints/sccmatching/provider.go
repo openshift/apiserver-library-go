@@ -32,7 +32,6 @@ const (
 // simpleProvider is the default implementation of SecurityContextConstraintsProvider
 type simpleProvider struct {
 	scc                       *securityv1.SecurityContextConstraints
-	runAsUserStrategy         user.RunAsUserSecurityContextConstraintsStrategy
 	seLinuxStrategy           selinux.SELinuxSecurityContextConstraintsStrategy
 	fsGroupStrategy           group.GroupSecurityContextConstraintsStrategy
 	supplementalGroupStrategy group.GroupSecurityContextConstraintsStrategy
@@ -71,11 +70,12 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvi
 		},
 	}
 
-	provider.runAsUserStrategy, err = user.CreateUserStrategy(&scc.RunAsUser)
+	runAsUserStrategy, err := user.CreateUserStrategy(&scc.RunAsUser)
 	if err != nil {
 		return nil, err
 	}
-	provider.containerValidators = append(provider.containerValidators, provider.runAsUserStrategy)
+	provider.containerMutators = append(provider.containerMutators, runAsUserStrategy)
+	provider.containerValidators = append(provider.containerValidators, runAsUserStrategy)
 
 	provider.seLinuxStrategy, err = selinux.CreateSELinuxStrategy(&scc.SELinuxContext)
 	if err != nil {
@@ -208,12 +208,11 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 		securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
 		securitycontext.NewContainerSecurityContextMutator(container.SecurityContext),
 	)
-	if sc.RunAsUser() == nil {
-		uid, err := s.runAsUserStrategy.Generate(pod, container)
-		if err != nil {
+
+	for _, mutator := range s.containerMutators {
+		if err := mutator.MutateContainer(sc); err != nil {
 			return nil, err
 		}
-		sc.SetRunAsUser(uid)
 	}
 
 	if sc.SELinuxOptions() == nil {

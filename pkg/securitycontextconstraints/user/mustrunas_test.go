@@ -34,18 +34,18 @@ func TestMustRunAsOptions(t *testing.T) {
 	}
 }
 
-func TestMustRunAsGenerate(t *testing.T) {
+func TestMustRunAsMutateContainer(t *testing.T) {
 	var uid int64 = 1
 	opts := &securityv1.RunAsUserStrategyOptions{UID: &uid}
 	mustRunAs, err := NewMustRunAs(opts)
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewMustRunAs %v", err)
 	}
-	generated, err := mustRunAs.Generate(nil, nil)
-	if err != nil {
+	sc := mutatorForUser(nil, nil)
+	if err = mustRunAs.MutateContainer(sc); err != nil {
 		t.Fatalf("unexpected error generating uid %v", err)
 	}
-	if *generated != uid {
+	if *sc.RunAsUser() != uid {
 		t.Errorf("generated uid does not equal configured uid")
 	}
 }

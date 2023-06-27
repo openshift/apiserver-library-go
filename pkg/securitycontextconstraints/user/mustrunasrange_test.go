@@ -50,11 +50,13 @@ func TestMustRunAsRangeGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewMustRunAsRange %v", err)
 	}
-	generated, err := mustRunAsRange.Generate(nil, nil)
+
+	sc := mutatorForUser(nil, nil)
+	err = mustRunAsRange.MutateContainer(sc)
 	if err != nil {
 		t.Fatalf("unexpected error generating uid %v", err)
 	}
-	if *generated != uidMin {
+	if *sc.RunAsUser() != uidMin {
 		t.Errorf("generated uid does not equal expected uid")
 	}
 }
