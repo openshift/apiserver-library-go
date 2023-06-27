@@ -40,8 +40,8 @@ type simpleProvider struct {
 	seccompStrategy           seccomp.SeccompStrategy
 	sysctlsStrategy           sysctl.SysctlsStrategy
 
-	containerValidators []sccapi.ContainerSecurityValidator
 	podValidators       []sccapi.PodSecurityValidator
+	containerValidators []sccapi.ContainerSecurityValidator
 }
 
 // ensure we implement the interface correctly.
@@ -56,6 +56,11 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	var err error
 	provider := &simpleProvider{
 		scc: scc,
+		podValidators: []sccapi.PodSecurityValidator{
+			NewPodBoolChecker(getPodHostPID, "hostPID", scc.AllowHostPID, "Host PID is not allowed to be used"),
+			NewPodBoolChecker(getPodHostNetwork, "hostNetwork", scc.AllowHostNetwork, "Host network is not allowed to be used"),
+			NewPodBoolChecker(getPodHostIPC, "hostIPC", scc.AllowHostIPC, "Host IPC is not allowed to be used"),
+		},
 	}
 
 	provider.runAsUserStrategy, err = user.CreateUserStrategy(&scc.RunAsUser)
@@ -266,19 +271,6 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 	}
 
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
-
-	if !s.scc.AllowHostNetwork && sc.HostNetwork() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), sc.HostNetwork(), "Host network is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostPID && sc.HostPID() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPID"), sc.HostPID(), "Host PID is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostIPC && sc.HostIPC() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostIPC"), sc.HostIPC(), "Host IPC is not allowed to be used"))
-	}
-
 	allErrs = append(allErrs, s.sysctlsStrategy.Validate(pod)...)
 
 	if len(pod.Spec.Volumes) > 0 && !sccutil.SCCAllowsAllVolumes(s.scc) {
