@@ -37,17 +37,16 @@ func NewDefaultCapabilities(defaultAddCapabilities, requiredDropCapabilities, al
 //  2. a capabilities.Drop set containing all the required drops and container requested drops
 //
 // Returns the original container capabilities if no changes are required.
-func (s *defaultCapabilities) Generate(pod *api.Pod, container *api.Container) (*api.Capabilities, error) {
+func (s *defaultCapabilities) MutateContainer(sc securitycontext.ContainerSecurityContextMutator) error {
 	defaultAdd := makeCapSet(s.defaultAddCapabilities)
 	requiredDrop := makeCapSet(s.requiredDropCapabilities)
 	containerAdd := sets.NewString()
 	containerDrop := sets.NewString()
 
-	var containerCapabilities *api.Capabilities
-	if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
-		containerCapabilities = container.SecurityContext.Capabilities
-		containerAdd = makeCapSetInternal(container.SecurityContext.Capabilities.Add)
-		containerDrop = makeCapSetInternal(container.SecurityContext.Capabilities.Drop)
+	containerCapabilities := sc.Capabilities()
+	if containerCapabilities != nil {
+		containerAdd = makeCapSetInternal(containerCapabilities.Add)
+		containerDrop = makeCapSetInternal(containerCapabilities.Drop)
 	}
 
 	// remove any default adds that the container is specifically dropping
@@ -58,13 +57,15 @@ func (s *defaultCapabilities) Generate(pod *api.Pod, container *api.Container) (
 
 	// no changes? return the original capabilities
 	if (len(combinedAdd) == len(containerAdd)) && (len(combinedDrop) == len(containerDrop)) {
-		return containerCapabilities, nil
+		return nil
 	}
 
-	return &api.Capabilities{
+	sc.SetCapabilities(&api.Capabilities{
 		Add:  capabilityFromStringSlice(combinedAdd.List()),
 		Drop: capabilityFromStringSlice(combinedDrop.List()),
-	}, nil
+	})
+
+	return nil
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.

@@ -99,11 +99,12 @@ func TestGenerateAdds(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		generatedCaps, err := strategy.Generate(nil, container)
+		err = strategy.MutateContainer(securitycontext.NewContainerSecurityContextMutator(container.SecurityContext))
 		if err != nil {
 			t.Errorf("%s failed generating: %v", k, err)
 			continue
 		}
+		generatedCaps := container.SecurityContext.Capabilities
 		if v.expectedCaps == nil && generatedCaps != nil {
 			t.Errorf("%s expected nil caps to be generated but got %v", k, generatedCaps)
 			continue
@@ -213,11 +214,12 @@ func TestGenerateDrops(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		generatedCaps, err := strategy.Generate(nil, container)
+		err = strategy.MutateContainer(securitycontext.NewContainerSecurityContextMutator(container.SecurityContext))
 		if err != nil {
 			t.Errorf("%s failed generating: %v", k, err)
 			continue
 		}
+		generatedCaps := container.SecurityContext.Capabilities
 		if v.expectedCaps == nil && generatedCaps != nil {
 			t.Errorf("%s expected nil caps to be generated but got %#v", k, generatedCaps)
 			continue

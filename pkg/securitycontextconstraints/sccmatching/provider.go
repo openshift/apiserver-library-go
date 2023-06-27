@@ -31,10 +31,9 @@ const (
 
 // simpleProvider is the default implementation of SecurityContextConstraintsProvider
 type simpleProvider struct {
-	scc                  *securityv1.SecurityContextConstraints
-	capabilitiesStrategy capabilities.CapabilitiesSecurityContextConstraintsStrategy
-	seccompStrategy      seccomp.SeccompStrategy
-	sysctlsStrategy      sysctl.SysctlsStrategy
+	scc             *securityv1.SecurityContextConstraints
+	seccompStrategy seccomp.SeccompStrategy
+	sysctlsStrategy sysctl.SysctlsStrategy
 
 	podValidators       []sccapi.PodSecurityValidator
 	containerValidators []sccapi.ContainerSecurityValidator
@@ -97,11 +96,12 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvi
 	provider.podMutators = append(provider.podMutators, supplementalGroupStrategy)
 	provider.podValidators = append(provider.podValidators, supplementalGroupStrategy)
 
-	provider.capabilitiesStrategy, err = capabilities.NewDefaultCapabilities(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
+	capabilitiesStrategy, err := capabilities.NewDefaultCapabilities(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
 		return nil, err
 	}
-	provider.containerValidators = append(provider.containerValidators, provider.capabilitiesStrategy)
+	provider.containerMutators = append(provider.containerMutators, capabilitiesStrategy)
+	provider.containerValidators = append(provider.containerValidators, capabilitiesStrategy)
 
 	// Seccomp strategy is special. We should get rid of the annotations ASAP.
 	provider.seccompStrategy = seccomp.NewSeccompStrategy(scc.SeccompProfiles)
@@ -221,12 +221,6 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 		}
 	}
 
-	caps, err := s.capabilitiesStrategy.Generate(pod, container)
-	if err != nil {
-		return nil, err
-	}
-	sc.SetCapabilities(caps)
-
 	// if the SCC requires a read only root filesystem and the container has not made a specific
 	// request then default ReadOnlyRootFilesystem to true.
 	if s.scc.ReadOnlyRootFilesystem && sc.ReadOnlyRootFilesystem() == nil {
@@ -236,7 +230,7 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 
 	isPrivileged := sc.Privileged() != nil && *sc.Privileged()
 	addCapSysAdmin := false
-	if caps != nil {
+	if caps := sc.Capabilities(); caps != nil {
 		for _, cap := range caps.Add {
 			if string(cap) == "CAP_SYS_ADMIN" {
 				addCapSysAdmin = true
