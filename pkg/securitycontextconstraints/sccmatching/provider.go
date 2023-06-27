@@ -89,15 +89,11 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	}
 	provider.containerValidators = append(provider.containerValidators, provider.capabilitiesStrategy)
 
-	provider.seccompStrategy, err = createSeccompStrategy(scc.SeccompProfiles)
-	if err != nil {
-		return nil, err
-	}
+	// Seccomp strategy is special. We should get rid of the annotations ASAP.
+	provider.seccompStrategy = seccomp.NewSeccompStrategy(scc.SeccompProfiles)
 
-	provider.sysctlsStrategy, err = createSysctlsStrategy(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
-	if err != nil {
-		return nil, err
-	}
+	// Sysctls are not available in the generic pod accessor
+	provider.sysctlsStrategy = sysctl.NewMustMatchPatterns(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
 
 	return provider, nil
 }
@@ -448,16 +444,6 @@ func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategy
 func getSupplementalGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
 	return podSC.SupplementalGroups()
 
-}
-
-// createSeccompStrategy creates a new seccomp strategy
-func createSeccompStrategy(allowedProfiles []string) (seccomp.SeccompStrategy, error) {
-	return seccomp.NewSeccompStrategy(allowedProfiles), nil
-}
-
-// createSysctlsStrategy creates a new sysctls strategy
-func createSysctlsStrategy(safeWhitelist, allowedUnsafeSysctls, forbiddenSysctls []string) (sysctl.SysctlsStrategy, error) {
-	return sysctl.NewMustMatchPatterns(safeWhitelist, allowedUnsafeSysctls, forbiddenSysctls), nil
 }
 
 // allowsVolumeType determines whether the type and volume are valid
