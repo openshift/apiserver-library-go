@@ -123,14 +123,14 @@ func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
 		errs = append(errs, field.Invalid(fldPath.Child("securityContext"), pod.Spec.SecurityContext, err.Error()))
 	}
 
-	errs = append(errs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
+	errs = append(errs, s.validatePod(pod, fldPath)...)
 
 	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
 		if err := s.mutateContainer(pod, container); err != nil {
-			errs = append(errs, field.Invalid(fldPath, "", err.Error()))
+			errs = append(errs, field.Invalid(fldPath.Child("securityContext"), "", err.Error()))
 			return true // don't short-circuit, report errors from other containers, too
 		}
-		errs = append(errs, s.validateContainerSecurityContext(pod, container, path)...)
+		errs = append(errs, s.validateContainer(pod, container, path)...)
 		return true
 	})
 
@@ -263,25 +263,40 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 	return nil
 }
 
+func (s *simpleProvider) validatePod(pod *api.Pod, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
+	allErrs = append(allErrs, s.validatePodVolumes(pod.Spec.Volumes, fldPath.Child("volumes"))...)
+
+	return allErrs
+}
+
 // Ensure a pod's SecurityContext is in compliance with the given constraints.
 func (s *simpleProvider) validatePodSecurityContext(pod *api.Pod, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	sc := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
 
+	scFieldPath := fldPath.Child("securityContext")
 	for _, validator := range s.podValidators {
-		allErrs = append(allErrs, validator.ValidatePod(fldPath, sc)...)
+		allErrs = append(allErrs, validator.ValidatePod(scFieldPath, sc)...)
 	}
 
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
 	allErrs = append(allErrs, s.sysctlsStrategy.Validate(pod)...)
 
-	if len(pod.Spec.Volumes) > 0 && !sccutil.SCCAllowsAllVolumes(s.scc) {
+	return allErrs
+}
+
+func (s *simpleProvider) validatePodVolumes(podVolumes []api.Volume, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(podVolumes) > 0 && !sccutil.SCCAllowsAllVolumes(s.scc) {
 		allowedVolumes := sccutil.FSTypeToStringSetInternal(s.scc.Volumes)
-		for i, v := range pod.Spec.Volumes {
+		for i, v := range podVolumes {
 			fsType, err := sccutil.GetVolumeFSType(v)
 			if err != nil {
-				allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "volumes").Index(i), string(fsType), err.Error()))
+				allErrs = append(allErrs, field.Invalid(fldPath.Index(i), string(fsType), err.Error()))
 				continue
 			}
 
@@ -293,8 +308,8 @@ func (s *simpleProvider) validatePodSecurityContext(pod *api.Pod, fldPath *field
 		}
 	}
 
-	if len(pod.Spec.Volumes) > 0 && len(s.scc.AllowedFlexVolumes) > 0 && sccutil.SCCAllowsFSTypeInternal(s.scc, securityv1.FSTypeFlexVolume) {
-		for i, v := range pod.Spec.Volumes {
+	if len(podVolumes) > 0 && len(s.scc.AllowedFlexVolumes) > 0 && sccutil.SCCAllowsFSTypeInternal(s.scc, securityv1.FSTypeFlexVolume) {
+		for i, v := range podVolumes {
 			if v.FlexVolume == nil {
 				continue
 			}
@@ -309,11 +324,20 @@ func (s *simpleProvider) validatePodSecurityContext(pod *api.Pod, fldPath *field
 			}
 			if !found {
 				allErrs = append(allErrs,
-					field.Invalid(fldPath.Child("volumes").Index(i).Child("driver"), driver,
+					field.Invalid(fldPath.Index(i).Child("driver"), driver,
 						"Flexvolume driver is not allowed to be used"))
 			}
 		}
 	}
+
+	return allErrs
+}
+
+func (s *simpleProvider) validateContainer(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, s.validateContainerSecurityContext(pod, container, fldPath.Child("securityContext"))...)
+	allErrs = append(allErrs, checkHostPort(s.scc.AllowHostPorts, container.Ports, fldPath.Child("ports"))...)
 
 	return allErrs
 }
@@ -330,21 +354,6 @@ func (s *simpleProvider) validateContainerSecurityContext(pod *api.Pod, containe
 	}
 	allErrs = append(allErrs, s.seccompStrategy.ValidateContainer(pod, container)...)
 
-	if !s.scc.AllowHostPorts {
-		allErrs = append(allErrs, s.hasHostPort(container, fldPath)...)
-	}
-
-	return allErrs
-}
-
-// hasHostPort checks the port definitions on the container for HostPort > 0.
-func (s *simpleProvider) hasHostPort(container *api.Container, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	for _, cp := range container.Ports {
-		if cp.HostPort > 0 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPort"), cp.HostPort, "Host ports are not allowed to be used"))
-		}
-	}
 	return allErrs
 }
 

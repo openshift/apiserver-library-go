@@ -2,9 +2,10 @@ package sccmatching
 
 import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/securitycontext"
 
-	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/api"
+	sccapi "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/api"
 )
 
 type podBoolFieldAccessor func(securitycontext.PodSecurityContextAccessor) bool
@@ -21,7 +22,7 @@ func (v containerValidatorFunc) ValidateContainer(fieldPath *field.Path, sc secu
 	return v(fieldPath, sc)
 }
 
-func NewPodBoolChecker(fieldAccessor podBoolFieldAccessor, pathChild string, allowed bool, errorString string) api.PodSecurityValidator {
+func NewPodBoolChecker(fieldAccessor podBoolFieldAccessor, pathChild string, allowed bool, errorString string) sccapi.PodSecurityValidator {
 	return podValidatorFunc(func(fieldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList {
 		allErrs := field.ErrorList{}
 
@@ -32,7 +33,7 @@ func NewPodBoolChecker(fieldAccessor podBoolFieldAccessor, pathChild string, all
 	})
 }
 
-func checkPrivileged(privilegedAllowed bool) api.ContainerSecurityValidator {
+func checkPrivileged(privilegedAllowed bool) sccapi.ContainerSecurityValidator {
 	return containerValidatorFunc(func(fieldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
 		allErrs := field.ErrorList{}
 
@@ -45,7 +46,7 @@ func checkPrivileged(privilegedAllowed bool) api.ContainerSecurityValidator {
 	})
 }
 
-func checkReadOnlyFileSystem(readOnlyRootFSRequired bool) api.ContainerSecurityValidator {
+func checkReadOnlyFileSystem(readOnlyRootFSRequired bool) sccapi.ContainerSecurityValidator {
 	return containerValidatorFunc(func(fieldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
 		allErrs := field.ErrorList{}
 		if !readOnlyRootFSRequired {
@@ -82,6 +83,21 @@ func checkAllowPrivilegeEscalation(privilegeEscalationAllowed *bool) containerVa
 
 		return allErrs
 	})
+}
+
+// hasHostPort checks the port definitions on the container for HostPort > 0.
+func checkHostPort(hostPortAllowed bool, containerPorts []api.ContainerPort, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if hostPortAllowed {
+		return allErrs
+	}
+
+	for _, cp := range containerPorts {
+		if cp.HostPort > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPort"), cp.HostPort, "Host ports are not allowed to be used"))
+		}
+	}
+	return allErrs
 }
 
 func getPodHostPID(podSC securitycontext.PodSecurityContextAccessor) bool {

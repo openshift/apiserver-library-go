@@ -1186,7 +1186,7 @@ func TestValidateAllowedVolumes(t *testing.T) {
 		}
 
 		// expect a denial for this SCC and test the error message to ensure it's related to the volumesource
-		errs := provider.validatePodSecurityContext(pod, field.NewPath(""))
+		errs := provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 1 {
 			t.Errorf("expected exactly 1 error for %s but got %v", fieldVal.Name, errs)
 		} else {
@@ -1197,14 +1197,14 @@ func TestValidateAllowedVolumes(t *testing.T) {
 
 		// now add the fstype directly to the scc and it should validate
 		scc.Volumes = []securityv1.FSType{fsType}
-		errs = provider.validatePodSecurityContext(pod, field.NewPath(""))
+		errs = provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("directly allowing volume expected no errors for %s but got %v", fieldVal.Name, errs)
 		}
 
 		// now change the scc to allow any volumes and the pod should still validate
 		scc.Volumes = []securityv1.FSType{securityv1.FSTypeAll}
-		errs = provider.validatePodSecurityContext(pod, field.NewPath(""))
+		errs = provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("wildcard volume expected no errors for %s but got %v", fieldVal.Name, errs)
 		}
@@ -1309,7 +1309,7 @@ func TestValidateProjectedVolume(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			pod.Spec.Volumes = []api.Volume{{VolumeSource: api.VolumeSource{Projected: test.projectedVolumeSource}}}
 			scc.Volumes = test.allowedFSTypes
-			errs := provider.validatePodSecurityContext(pod, field.NewPath(""))
+			errs := provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 			if test.wantAllow {
 				require.Empty(t, errs, "projected volumes are allowed if secret volumes is allowed and BoundServiceAccountTokenVolume is enabled")
 			} else {
