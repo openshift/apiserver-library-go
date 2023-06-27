@@ -19,7 +19,6 @@ import (
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sysctl"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/user"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
-	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 )
 
 // used to pass in the field being validated for reusable group strategies so they
@@ -333,10 +332,7 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 	}
 
 	if !s.scc.AllowHostPorts {
-		podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
-			allErrs = append(allErrs, s.hasHostPort(container, path)...)
-			return true
-		})
+		allErrs = append(allErrs, s.hasHostPort(container, fldPath)...)
 	}
 
 	if s.scc.ReadOnlyRootFilesystem {
