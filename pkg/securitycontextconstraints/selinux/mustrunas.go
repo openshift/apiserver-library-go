@@ -31,9 +31,30 @@ func NewMustRunAs(options *securityv1.SELinuxContextStrategyOptions) (SELinuxSec
 	}, nil
 }
 
-// Generate creates the SELinuxOptions based on constraint rules.
-func (s *mustRunAs) Generate(_ *coreapi.Pod, _ *coreapi.Container) (*coreapi.SELinuxOptions, error) {
-	return ToInternalSELinuxOptions(s.opts.SELinuxOptions)
+func (s *mustRunAs) MutateContainer(sc securitycontext.ContainerSecurityContextMutator) error {
+	if sc.SELinuxOptions() != nil {
+		return nil
+	}
+
+	opts, err := ToInternalSELinuxOptions(s.opts.SELinuxOptions)
+	if err != nil {
+		return err
+	}
+	sc.SetSELinuxOptions(opts)
+	return nil
+}
+
+func (s *mustRunAs) MutatePod(podSC securitycontext.PodSecurityContextMutator) error {
+	if podSC.SELinuxOptions() != nil {
+		return nil
+	}
+
+	opts, err := ToInternalSELinuxOptions(s.opts.SELinuxOptions)
+	if err != nil {
+		return err
+	}
+	podSC.SetSELinuxOptions(opts)
+	return nil
 }
 
 func (s *mustRunAs) ValidatePod(fldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList {

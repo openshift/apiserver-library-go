@@ -20,17 +20,19 @@ func TestRunAsAnyOptions(t *testing.T) {
 	}
 }
 
-func TestRunAsAnyGenerate(t *testing.T) {
+func TestRunAsAnyMutateContainer(t *testing.T) {
 	s, err := NewRunAsAny(&securityv1.SELinuxContextStrategyOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsAny %v", err)
 	}
-	uid, err := s.Generate(nil, nil)
-	if uid != nil {
-		t.Errorf("expected nil uid but got %v", *uid)
+
+	sc := containerMutatorForSELinuxOpts(nil, nil)
+	err = s.MutateContainer(sc)
+	if opts := sc.SELinuxOptions(); opts != nil {
+		t.Errorf("expected nil opts but got %v", *opts)
 	}
 	if err != nil {
-		t.Errorf("unexpected error generating uid %v", err)
+		t.Errorf("unexpected error generating opts %v", err)
 	}
 }
 
@@ -66,4 +68,15 @@ func containerAccessorForSELinuxOpts(podOpts, containerOpts *coreapi.SELinuxOpti
 		securitycontext.NewContainerSecurityContextMutator(
 			&coreapi.SecurityContext{SELinuxOptions: containerOpts},
 		))
+}
+
+func containerMutatorForSELinuxOpts(podOpts, containerOpts *coreapi.SELinuxOptions) securitycontext.ContainerSecurityContextMutator {
+	return securitycontext.NewEffectiveContainerSecurityContextMutator(
+		securitycontext.NewPodSecurityContextAccessor(&coreapi.PodSecurityContext{
+			SELinuxOptions: podOpts,
+		}),
+		securitycontext.NewContainerSecurityContextMutator(&coreapi.SecurityContext{
+			SELinuxOptions: containerOpts,
+		}),
+	)
 }

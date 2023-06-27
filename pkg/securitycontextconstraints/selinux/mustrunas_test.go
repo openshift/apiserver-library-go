@@ -36,7 +36,7 @@ func TestMustRunAsOptions(t *testing.T) {
 	}
 }
 
-func TestMustRunAsGenerate(t *testing.T) {
+func TestMustRunAsMutateContainer(t *testing.T) {
 	opts := &securityv1.SELinuxContextStrategyOptions{
 		SELinuxOptions: &corev1.SELinuxOptions{
 			User:  "user",
@@ -49,11 +49,12 @@ func TestMustRunAsGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewMustRunAs %v", err)
 	}
-	generated, err := mustRunAs.Generate(nil, nil)
+	sc := containerMutatorForSELinuxOpts(nil, nil)
+	err = mustRunAs.MutateContainer(sc)
 	if err != nil {
 		t.Fatalf("unexpected error generating selinux %v", err)
 	}
-	if !reflect.DeepEqual(generated, ToInternalSELinuxOptionsOrDie(opts.SELinuxOptions)) {
+	if !reflect.DeepEqual(sc.SELinuxOptions(), ToInternalSELinuxOptionsOrDie(opts.SELinuxOptions)) {
 		t.Errorf("generated selinux does not equal configured selinux")
 	}
 }

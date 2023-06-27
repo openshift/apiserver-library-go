@@ -32,7 +32,6 @@ const (
 // simpleProvider is the default implementation of SecurityContextConstraintsProvider
 type simpleProvider struct {
 	scc                       *securityv1.SecurityContextConstraints
-	seLinuxStrategy           selinux.SELinuxSecurityContextConstraintsStrategy
 	fsGroupStrategy           group.GroupSecurityContextConstraintsStrategy
 	supplementalGroupStrategy group.GroupSecurityContextConstraintsStrategy
 	capabilitiesStrategy      capabilities.CapabilitiesSecurityContextConstraintsStrategy
@@ -77,12 +76,14 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvi
 	provider.containerMutators = append(provider.containerMutators, runAsUserStrategy)
 	provider.containerValidators = append(provider.containerValidators, runAsUserStrategy)
 
-	provider.seLinuxStrategy, err = selinux.CreateSELinuxStrategy(&scc.SELinuxContext)
+	seLinuxStrategy, err := selinux.CreateSELinuxStrategy(&scc.SELinuxContext)
 	if err != nil {
 		return nil, err
 	}
-	provider.podValidators = append(provider.podValidators, provider.seLinuxStrategy)
-	provider.containerValidators = append(provider.containerValidators, provider.seLinuxStrategy)
+	provider.podMutators = append(provider.podMutators, seLinuxStrategy)
+	provider.podValidators = append(provider.podValidators, seLinuxStrategy)
+	provider.containerMutators = append(provider.containerMutators, seLinuxStrategy)
+	provider.containerValidators = append(provider.containerValidators, seLinuxStrategy)
 
 	provider.fsGroupStrategy, err = createFSGroupStrategy(&scc.FSGroup)
 	if err != nil {
@@ -159,6 +160,12 @@ func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container 
 func (s *simpleProvider) mutatePod(pod *api.Pod) error {
 	sc := securitycontext.NewPodSecurityContextMutator(pod.Spec.SecurityContext)
 
+	for _, mutator := range s.podMutators {
+		if err := mutator.MutatePod(sc); err != nil {
+			return err
+		}
+	}
+
 	if sc.SupplementalGroups() == nil {
 		supGroups, err := s.supplementalGroupStrategy.Generate(pod)
 		if err != nil {
@@ -173,14 +180,6 @@ func (s *simpleProvider) mutatePod(pod *api.Pod) error {
 			return err
 		}
 		sc.SetFSGroup(fsGroup)
-	}
-
-	if sc.SELinuxOptions() == nil {
-		seLinux, err := s.seLinuxStrategy.Generate(pod, nil)
-		if err != nil {
-			return err
-		}
-		sc.SetSELinuxOptions(seLinux)
 	}
 
 	// This is only generated on the pod level.  Containers inherit the pod's profile.  If the
@@ -213,14 +212,6 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 		if err := mutator.MutateContainer(sc); err != nil {
 			return nil, err
 		}
-	}
-
-	if sc.SELinuxOptions() == nil {
-		seLinux, err := s.seLinuxStrategy.Generate(pod, container)
-		if err != nil {
-			return nil, err
-		}
-		sc.SetSELinuxOptions(seLinux)
 	}
 
 	// if we're using the non-root strategy set the marker that this container should not be
