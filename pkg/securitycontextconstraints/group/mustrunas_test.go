@@ -26,7 +26,7 @@ func TestMustRunAsOptions(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		_, err := NewMustRunAs(v.ranges, "", func(securitycontext.PodSecurityContextAccessor) []int64 { return nil })
+		_, err := NewMustRunAs(v.ranges, "", func(securitycontext.PodSecurityContextAccessor) []int64 { return nil }, nil)
 		if v.pass && err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
@@ -63,14 +63,20 @@ func TestGenerate(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		s, err := NewMustRunAs(v.ranges, "", func(securitycontext.PodSecurityContextAccessor) []int64 { return nil })
+		s, err := NewMustRunAs(v.ranges, "",
+			func(sc securitycontext.PodSecurityContextAccessor) []int64 { return sc.SupplementalGroups() },
+			func(pscm securitycontext.PodSecurityContextMutator, val int64) {
+				pscm.SetSupplementalGroups([]int64{val})
+			})
 		if err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}
-		actual, err := s.Generate(nil)
+		sc := securitycontext.NewPodSecurityContextMutator(&api.PodSecurityContext{})
+		err = s.MutatePod(sc)
 		if err != nil {
 			t.Errorf("unexpected error for %s: %v", k, err)
 		}
+		actual := sc.SupplementalGroups()
 		if len(actual) != len(v.expected) {
 			t.Errorf("unexpected generated values.  Expected %v, got %v", v.expected, actual)
 			continue
@@ -79,17 +85,6 @@ func TestGenerate(t *testing.T) {
 			if actual[0] != v.expected[0] {
 				t.Errorf("unexpected generated values.  Expected %v, got %v", v.expected, actual)
 			}
-		}
-
-		single, err := s.GenerateSingle(nil)
-		if err != nil {
-			t.Errorf("unexpected error for %s: %v", k, err)
-		}
-		if single == nil {
-			t.Errorf("unexpected nil generated value for %s: %v", k, single)
-		}
-		if *single != v.expected[0] {
-			t.Errorf("unexpected generated single value.  Expected %v, got %v", v.expected, actual)
 		}
 	}
 }
@@ -149,7 +144,7 @@ func TestValidate(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		s, err := NewMustRunAs(v.ranges, "", func(_ securitycontext.PodSecurityContextAccessor) []int64 { return v.groups })
+		s, err := NewMustRunAs(v.ranges, "", func(_ securitycontext.PodSecurityContextAccessor) []int64 { return v.groups }, nil)
 		if err != nil {
 			t.Errorf("error creating strategy for %s: %v", k, err)
 		}

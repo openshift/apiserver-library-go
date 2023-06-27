@@ -31,12 +31,10 @@ const (
 
 // simpleProvider is the default implementation of SecurityContextConstraintsProvider
 type simpleProvider struct {
-	scc                       *securityv1.SecurityContextConstraints
-	fsGroupStrategy           group.GroupSecurityContextConstraintsStrategy
-	supplementalGroupStrategy group.GroupSecurityContextConstraintsStrategy
-	capabilitiesStrategy      capabilities.CapabilitiesSecurityContextConstraintsStrategy
-	seccompStrategy           seccomp.SeccompStrategy
-	sysctlsStrategy           sysctl.SysctlsStrategy
+	scc                  *securityv1.SecurityContextConstraints
+	capabilitiesStrategy capabilities.CapabilitiesSecurityContextConstraintsStrategy
+	seccompStrategy      seccomp.SeccompStrategy
+	sysctlsStrategy      sysctl.SysctlsStrategy
 
 	podValidators       []sccapi.PodSecurityValidator
 	containerValidators []sccapi.ContainerSecurityValidator
@@ -85,17 +83,19 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvi
 	provider.containerMutators = append(provider.containerMutators, seLinuxStrategy)
 	provider.containerValidators = append(provider.containerValidators, seLinuxStrategy)
 
-	provider.fsGroupStrategy, err = createFSGroupStrategy(&scc.FSGroup)
+	fsGroupStrategy, err := createFSGroupStrategy(&scc.FSGroup)
 	if err != nil {
 		return nil, err
 	}
-	provider.podValidators = append(provider.podValidators, provider.fsGroupStrategy)
+	provider.podMutators = append(provider.podMutators, fsGroupStrategy)
+	provider.podValidators = append(provider.podValidators, fsGroupStrategy)
 
-	provider.supplementalGroupStrategy, err = createSupplementalGroupStrategy(&scc.SupplementalGroups)
+	supplementalGroupStrategy, err := createSupplementalGroupStrategy(&scc.SupplementalGroups)
 	if err != nil {
 		return nil, err
 	}
-	provider.podValidators = append(provider.podValidators, provider.supplementalGroupStrategy)
+	provider.podMutators = append(provider.podMutators, supplementalGroupStrategy)
+	provider.podValidators = append(provider.podValidators, supplementalGroupStrategy)
 
 	provider.capabilitiesStrategy, err = capabilities.NewDefaultCapabilities(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
@@ -164,22 +164,6 @@ func (s *simpleProvider) mutatePod(pod *api.Pod) error {
 		if err := mutator.MutatePod(sc); err != nil {
 			return err
 		}
-	}
-
-	if sc.SupplementalGroups() == nil {
-		supGroups, err := s.supplementalGroupStrategy.Generate(pod)
-		if err != nil {
-			return err
-		}
-		sc.SetSupplementalGroups(supGroups)
-	}
-
-	if sc.FSGroup() == nil {
-		fsGroup, err := s.fsGroupStrategy.GenerateSingle(pod)
-		if err != nil {
-			return err
-		}
-		sc.SetFSGroup(fsGroup)
 	}
 
 	// This is only generated on the pod level.  Containers inherit the pod's profile.  If the
@@ -406,7 +390,7 @@ func createFSGroupStrategy(opts *securityv1.FSGroupStrategyOptions) (group.Group
 	case securityv1.FSGroupStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.FSGroupStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, fsGroupField, getFSGroups)
+		return group.NewMustRunAs(opts.Ranges, fsGroupField, getFSGroups, setFSGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized FSGroup strategy type %s", opts.Type)
 	}
@@ -419,13 +403,17 @@ func getFSGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
 	return nil
 }
 
+func setFSGroups(podSC securitycontext.PodSecurityContextMutator, val int64) {
+	podSC.SetFSGroup(&val)
+}
+
 // createSupplementalGroupStrategy creates a new supplemental group strategy
 func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategyOptions) (group.GroupSecurityContextConstraintsStrategy, error) {
 	switch opts.Type {
 	case securityv1.SupplementalGroupsStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.SupplementalGroupsStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField, getSupplementalGroups)
+		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField, getSupplementalGroups, SetSupplementalGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized SupplementalGroups strategy type %s", opts.Type)
 	}
@@ -433,7 +421,10 @@ func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategy
 
 func getSupplementalGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
 	return podSC.SupplementalGroups()
+}
 
+func SetSupplementalGroups(podSC securitycontext.PodSecurityContextMutator, val int64) {
+	podSC.SetSupplementalGroups([]int64{val})
 }
 
 // allowsVolumeType determines whether the type and volume are valid
