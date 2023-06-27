@@ -126,25 +126,13 @@ func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
 	errs = append(errs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
 
 	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
-		errs = append(errs, s.assignContainerSecurityContext(pod, container, path)...)
+		if err := s.mutateContainer(pod, container); err != nil {
+			errs = append(errs, field.Invalid(fldPath, "", err.Error()))
+			return true // don't short-circuit, report errors from other containers, too
+		}
+		errs = append(errs, s.validateContainerSecurityContext(pod, container, path)...)
 		return true
 	})
-
-	if len(errs) > 0 {
-		return errs
-	}
-
-	return nil
-}
-
-func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
-	errs := field.ErrorList{}
-	err := s.mutateContainer(pod, container)
-	if err != nil {
-		errs = append(errs, field.Invalid(fldPath, "", err.Error()))
-		return errs
-	}
-	errs = append(errs, s.validateContainerSecurityContext(pod, container, fldPath)...)
 
 	if len(errs) > 0 {
 		return errs
