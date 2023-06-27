@@ -138,7 +138,7 @@ func TestAssignSecurityContext(t *testing.T) {
 			t.Run(k, func(t *testing.T) {
 				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
 
-				errs := AssignSecurityContext(provider, v.pod, nil)
+				errs := provider.ApplyToPod(v.pod)
 				if v.shouldValidate && len(errs) > 0 {
 					t.Fatalf("%s expected to validate but received errors %v", k, errs)
 				}

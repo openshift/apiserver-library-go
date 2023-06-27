@@ -1022,7 +1022,7 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	// test forcing the usage of a lower priority that doesn't match
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
 	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPriorityAndScoreSCCOne.Name
-	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `pods "Unknown" is forbidden: unable to validate against any security context constraint: provider matchingPriorityAndScoreSCCOne: .containers[0].runAsUser: Invalid value: 5: must be: 6`, t)
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `pods "Unknown" is forbidden: unable to validate against any security context constraint: spec.containers[0].runAsUser: Invalid value: 5: must be: 6`, t) // TODO: get the provider name back in somehow
 
 	// test forcing the usage of scc that doesn't exist
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
@@ -1197,17 +1197,8 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		t.Fatalf("failed to create a mutating provider: %v", err)
 	}
 	mutatedPod := simplePod.DeepCopy()
-	mutatedPod.Spec.SecurityContext, mutatedPod.Annotations, err = mutatingProvider.CreatePodSecurityContext(mutatedPod)
-	if err != nil {
-		t.Fatalf("failed to mutate the pod: %v", err)
-	}
-
-	mutatedPod.Spec.Containers[0].SecurityContext, err = mutatingProvider.CreateContainerSecurityContext(
-		mutatedPod,
-		&mutatedPod.Spec.Containers[0],
-	)
-	if err != nil {
-		t.Fatalf("failed to mutate the container: %v", err)
+	if errs := mutatingProvider.ApplyToPod(mutatedPod); len(errs) > 0 {
+		t.Fatalf("failed to mutate the pod: %v", errs)
 	}
 
 	mutatedPodModifiedByEpehemeralContainers := mutatedPod.DeepCopy()

@@ -9,14 +9,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-	kapi "k8s.io/kubernetes/pkg/apis/core"
-	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 
 	"github.com/openshift/api/security"
 	securityv1 "github.com/openshift/api/security/v1"
@@ -106,50 +103,6 @@ func ConstraintAppliesTo(ctx context.Context, sccName string, sccUsers, sccGroup
 		return authorizedForSCC(ctx, sccName, userInfo, namespace, a)
 	}
 	return false
-}
-
-// AssignSecurityContext creates a security context for each container in the pod
-// and validates that the sc falls within the scc constraints.  All containers must validate against
-// the same scc or is not considered valid.
-func AssignSecurityContext(provider SecurityContextConstraintsProvider, pod *kapi.Pod, fldPath *field.Path) field.ErrorList {
-	errs := field.ErrorList{}
-
-	psc, generatedAnnotations, err := provider.CreatePodSecurityContext(pod)
-	if err != nil {
-		errs = append(errs, field.Invalid(fldPath.Child("spec", "securityContext"), pod.Spec.SecurityContext, err.Error()))
-	}
-
-	pod.Spec.SecurityContext = psc
-	pod.Annotations = generatedAnnotations
-	errs = append(errs, provider.ValidatePodSecurityContext(pod, fldPath.Child("spec", "securityContext"))...)
-
-	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *kapi.Container, path *field.Path) bool {
-		errs = append(errs, assignContainerSecurityContext(provider, pod, container, path)...)
-		return true
-	})
-
-	if len(errs) > 0 {
-		return errs
-	}
-
-	return nil
-}
-
-func assignContainerSecurityContext(provider SecurityContextConstraintsProvider, pod *kapi.Pod, container *kapi.Container, fldPath *field.Path) field.ErrorList {
-	errs := field.ErrorList{}
-	sc, err := provider.CreateContainerSecurityContext(pod, container)
-	if err != nil {
-		errs = append(errs, field.Invalid(fldPath, "", err.Error()))
-		return errs
-	}
-	container.SecurityContext = sc
-	errs = append(errs, provider.ValidateContainerSecurityContext(pod, container, fldPath)...)
-
-	if len(errs) > 0 {
-		return errs
-	}
-
-	return nil
 }
 
 // constraintSupportsGroup checks that group is in constraintGroups.

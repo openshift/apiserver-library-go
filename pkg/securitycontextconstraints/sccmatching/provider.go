@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
@@ -47,7 +48,7 @@ type simpleProvider struct {
 var _ SecurityContextConstraintsProvider = &simpleProvider{}
 
 // NewSimpleProvider creates a new SecurityContextConstraintsProvider instance.
-func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityContextConstraintsProvider, error) {
+func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvider, error) {
 	if scc == nil {
 		return nil, fmt.Errorf("NewSimpleProvider requires a SecurityContextConstraint")
 	}
@@ -107,10 +108,55 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	return provider, nil
 }
 
+func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
+	// AssignSecurityContext creates a security context for each container in the pod
+	// and validates that the sc falls within the scc constraints.  All containers must validate against
+	// the same scc or is not considered valid.
+	errs := field.ErrorList{}
+
+	fldPath := field.NewPath("spec")
+	psc, generatedAnnotations, err := s.createPodSecurityContext(pod)
+	if err != nil {
+		errs = append(errs, field.Invalid(fldPath.Child("securityContext"), pod.Spec.SecurityContext, err.Error()))
+	}
+
+	pod.Spec.SecurityContext = psc
+	pod.Annotations = generatedAnnotations
+	errs = append(errs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
+
+	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
+		errs = append(errs, s.assignContainerSecurityContext(pod, container, path)...)
+		return true
+	})
+
+	if len(errs) > 0 {
+		return errs
+	}
+
+	return nil
+}
+
+func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
+	errs := field.ErrorList{}
+	sc, err := s.createContainerSecurityContext(pod, container)
+	if err != nil {
+		errs = append(errs, field.Invalid(fldPath, "", err.Error()))
+		return errs
+	}
+	container.SecurityContext = sc
+	errs = append(errs, s.validateContainerSecurityContext(pod, container, fldPath)...)
+
+	if len(errs) > 0 {
+		return errs
+	}
+
+	return nil
+}
+
 // Create a PodSecurityContext based on the given constraints.  If a setting is already set
 // on the PodSecurityContext it will not be changed.  Validate should be used after the context
 // is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) CreatePodSecurityContext(pod *api.Pod) (*api.PodSecurityContext, map[string]string, error) {
+func (s *simpleProvider) createPodSecurityContext(pod *api.Pod) (*api.PodSecurityContext, map[string]string, error) {
 	sc := securitycontext.NewPodSecurityContextMutator(pod.Spec.SecurityContext)
 
 	annotationsCopy := copySS(pod.Annotations)
@@ -159,7 +205,7 @@ func (s *simpleProvider) CreatePodSecurityContext(pod *api.Pod) (*api.PodSecurit
 // Create a SecurityContext based on the given constraints.  If a setting is already set on the
 // container's security context then it will not be changed.  Validation should be used after
 // the context is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) CreateContainerSecurityContext(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
+func (s *simpleProvider) createContainerSecurityContext(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
 	sc := securitycontext.NewEffectiveContainerSecurityContextMutator(
 		securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
 		securitycontext.NewContainerSecurityContextMutator(container.SecurityContext),
@@ -265,7 +311,7 @@ func (s *simpleProvider) CreateContainerSecurityContext(pod *api.Pod, container 
 }
 
 // Ensure a pod's SecurityContext is in compliance with the given constraints.
-func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field.Path) field.ErrorList {
+func (s *simpleProvider) validatePodSecurityContext(pod *api.Pod, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	sc := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
@@ -320,7 +366,7 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 }
 
 // Ensure a container's SecurityContext is in compliance with the given constraints
-func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
+func (s *simpleProvider) validateContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	podSC := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
