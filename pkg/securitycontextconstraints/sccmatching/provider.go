@@ -340,23 +340,11 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("privileged"), *privileged, "Privileged containers are not allowed"))
 	}
 
-	if !s.scc.AllowHostNetwork && podSC.HostNetwork() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), podSC.HostNetwork(), "Host network is not allowed to be used"))
-	}
-
 	if !s.scc.AllowHostPorts {
 		podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
 			allErrs = append(allErrs, s.hasHostPort(container, path)...)
 			return true
 		})
-	}
-
-	if !s.scc.AllowHostPID && podSC.HostPID() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPID"), podSC.HostPID(), "Host PID is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostIPC && podSC.HostIPC() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostIPC"), podSC.HostIPC(), "Host IPC is not allowed to be used"))
 	}
 
 	if s.scc.ReadOnlyRootFilesystem {
