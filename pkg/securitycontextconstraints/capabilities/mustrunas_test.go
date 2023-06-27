@@ -6,6 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
@@ -327,7 +328,7 @@ func TestValidateAdds(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		errs := strategy.Validate(nil, nil, nil, v.containerCaps)
+		errs := strategy.ValidateContainer(nil, containerAccessorForCapabilities(v.containerCaps))
 		if v.shouldPass && len(errs) > 0 {
 			t.Errorf("%s should have passed but had errors %v", k, errs)
 			continue
@@ -384,7 +385,7 @@ func TestValidateDrops(t *testing.T) {
 			t.Errorf("%s failed: %v", k, err)
 			continue
 		}
-		errs := strategy.Validate(nil, nil, nil, v.containerCaps)
+		errs := strategy.ValidateContainer(nil, containerAccessorForCapabilities(v.containerCaps))
 		if v.shouldPass && len(errs) > 0 {
 			t.Errorf("%s should have passed but had errors %v", k, errs)
 			continue
@@ -393,4 +394,12 @@ func TestValidateDrops(t *testing.T) {
 			t.Errorf("%s should have failed but recieved no errors", k)
 		}
 	}
+}
+
+func containerAccessorForCapabilities(containerCaps *api.Capabilities) securitycontext.ContainerSecurityContextAccessor {
+	return securitycontext.NewContainerSecurityContextAccessor(
+		&api.SecurityContext{
+			Capabilities: containerCaps,
+		},
+	)
 }

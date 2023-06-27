@@ -83,10 +83,11 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 	}
 	provider.podValidators = append(provider.podValidators, provider.supplementalGroupStrategy)
 
-	provider.capabilitiesStrategy, err = createCapabilitiesStrategy(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
+	provider.capabilitiesStrategy, err = capabilities.NewDefaultCapabilities(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
 		return nil, err
 	}
+	provider.containerValidators = append(provider.containerValidators, provider.capabilitiesStrategy)
 
 	provider.seccompStrategy, err = createSeccompStrategy(scc.SeccompProfiles)
 	if err != nil {
@@ -343,8 +344,6 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("privileged"), *privileged, "Privileged containers are not allowed"))
 	}
 
-	allErrs = append(allErrs, s.capabilitiesStrategy.Validate(fldPath, pod, container, sc.Capabilities())...)
-
 	if !s.scc.AllowHostNetwork && podSC.HostNetwork() {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), podSC.HostNetwork(), "Host network is not allowed to be used"))
 	}
@@ -449,11 +448,6 @@ func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategy
 func getSupplementalGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
 	return podSC.SupplementalGroups()
 
-}
-
-// createCapabilitiesStrategy creates a new capabilities strategy.
-func createCapabilitiesStrategy(defaultAddCaps, requiredDropCaps, allowedCaps []corev1.Capability) (capabilities.CapabilitiesSecurityContextConstraintsStrategy, error) {
-	return capabilities.NewDefaultCapabilities(defaultAddCaps, requiredDropCaps, allowedCaps)
 }
 
 // createSeccompStrategy creates a new seccomp strategy

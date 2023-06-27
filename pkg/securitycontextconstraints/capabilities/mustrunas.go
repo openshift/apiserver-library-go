@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
@@ -67,8 +68,9 @@ func (s *defaultCapabilities) Generate(pod *api.Pod, container *api.Container) (
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.
-func (s *defaultCapabilities) Validate(fldPath *field.Path, pod *api.Pod, container *api.Container, capabilities *api.Capabilities) field.ErrorList {
+func (s *defaultCapabilities) ValidateContainer(fldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
 	allErrs := field.ErrorList{}
+	capabilities := sc.Capabilities()
 
 	if capabilities == nil {
 		// if container.SC.Caps is nil then nothing was defaulted by the strat or requested by the pod author
