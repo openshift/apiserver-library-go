@@ -139,12 +139,11 @@ func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
 
 func (s *simpleProvider) assignContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
 	errs := field.ErrorList{}
-	sc, err := s.mutateContainer(pod, container)
+	err := s.mutateContainer(pod, container)
 	if err != nil {
 		errs = append(errs, field.Invalid(fldPath, "", err.Error()))
 		return errs
 	}
-	container.SecurityContext = sc
 	errs = append(errs, s.validateContainerSecurityContext(pod, container, fldPath)...)
 
 	if len(errs) > 0 {
@@ -186,7 +185,7 @@ func (s *simpleProvider) mutatePod(pod *api.Pod) error {
 // Create a SecurityContext based on the given constraints.  If a setting is already set on the
 // container's security context then it will not be changed.  Validation should be used after
 // the context is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
+func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container) error {
 	sc := securitycontext.NewEffectiveContainerSecurityContextMutator(
 		securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
 		securitycontext.NewContainerSecurityContextMutator(container.SecurityContext),
@@ -194,7 +193,7 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 
 	for _, mutator := range s.containerMutators {
 		if err := mutator.MutateContainer(sc); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -273,7 +272,7 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 		sc.SetAllowPrivilegeEscalation(s.scc.AllowPrivilegeEscalation)
 	}
 
-	return sc.ContainerSecurityContext(), nil
+	return nil
 }
 
 // Ensure a pod's SecurityContext is in compliance with the given constraints.

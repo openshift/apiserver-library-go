@@ -116,7 +116,7 @@ func cestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create provider %v", err)
 	}
-	_, err = provider.mutateContainer(pod, &pod.Spec.Containers[0])
+	err = provider.mutateContainer(pod, &pod.Spec.Containers[0])
 	if err != nil {
 		t.Fatalf("unable to create container security context %v", err)
 	}
@@ -916,12 +916,13 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
 		}
-		sc, err := provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
+		err = provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
 		if err != nil {
 			t.Errorf("%s unable to create container security context %v", k, err)
 			continue
 		}
 
+		sc := v.pod.Spec.Containers[0].SecurityContext
 		if v.expected == nil && sc.ReadOnlyRootFilesystem != nil {
 			t.Errorf("%s expected a nil ReadOnlyRootFilesystem but got %t", k, *sc.ReadOnlyRootFilesystem)
 		}
@@ -1070,12 +1071,13 @@ func TestGenerateNonRootSecurityContextOnNonZeroRunAsUser(t *testing.T) {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
 		}
-		sc, err := provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
+		err = provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
 		if err != nil {
 			t.Errorf("%s unable to create container security context %v", k, err)
 			continue
 		}
 
+		sc := v.pod.Spec.Containers[0].SecurityContext
 		if !equality.Semantic.DeepEqual(v.expectedSC, sc) {
 			t.Errorf("%s expected security context does not match the actual: %s", k, diff.ObjectDiff(v.expectedSC, sc))
 		}
@@ -1561,9 +1563,10 @@ func TestSeccompAnnotationsFieldsGeneration(t *testing.T) {
 				t.Errorf("pod seccomp profiles differ - expected %v; got %v", tt.expectedPodSeccomp, podCopy.Spec.SecurityContext.SeccompProfile)
 			}
 
-			containerSecurityContext, err := tt.sccProvider.mutateContainer(tt.pod, &tt.pod.Spec.Containers[0])
+			err = tt.sccProvider.mutateContainer(tt.pod, &tt.pod.Spec.Containers[0])
 			require.NoError(t, err)
 
+			containerSecurityContext := tt.pod.Spec.Containers[0].SecurityContext
 			if !reflect.DeepEqual(tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile) {
 				t.Errorf("container seccomp profiles differ - expected %v; got %v", tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile)
 			}
