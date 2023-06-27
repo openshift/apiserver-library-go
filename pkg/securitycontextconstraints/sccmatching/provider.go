@@ -60,6 +60,11 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityCont
 			NewPodBoolChecker(getPodHostNetwork, "hostNetwork", scc.AllowHostNetwork, "Host network is not allowed to be used"),
 			NewPodBoolChecker(getPodHostIPC, "hostIPC", scc.AllowHostIPC, "Host IPC is not allowed to be used"),
 		},
+		containerValidators: []sccapi.ContainerSecurityValidator{
+			checkPrivileged(scc.AllowPrivilegedContainer),
+			checkReadOnlyFileSystem(scc.ReadOnlyRootFilesystem),
+			checkAllowPrivilegeEscalation(scc.AllowPrivilegeEscalation),
+		},
 	}
 
 	provider.runAsUserStrategy, err = user.CreateUserStrategy(&scc.RunAsUser)
@@ -326,33 +331,8 @@ func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, containe
 	}
 	allErrs = append(allErrs, s.seccompStrategy.ValidateContainer(pod, container)...)
 
-	privileged := sc.Privileged()
-	if !s.scc.AllowPrivilegedContainer && privileged != nil && *privileged {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("privileged"), *privileged, "Privileged containers are not allowed"))
-	}
-
 	if !s.scc.AllowHostPorts {
 		allErrs = append(allErrs, s.hasHostPort(container, fldPath)...)
-	}
-
-	if s.scc.ReadOnlyRootFilesystem {
-		readOnly := sc.ReadOnlyRootFilesystem()
-		if readOnly == nil {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("readOnlyRootFilesystem"), readOnly, "ReadOnlyRootFilesystem may not be nil and must be set to true"))
-		} else if !*readOnly {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("readOnlyRootFilesystem"), *readOnly, "ReadOnlyRootFilesystem must be set to true"))
-		}
-	}
-
-	allowEscalation := sc.AllowPrivilegeEscalation()
-	if s.scc.AllowPrivilegeEscalation != nil && !*s.scc.AllowPrivilegeEscalation {
-		if allowEscalation == nil {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("allowPrivilegeEscalation"), allowEscalation, "Allowing privilege escalation for containers is not allowed"))
-		}
-
-		if allowEscalation != nil && *allowEscalation {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("allowPrivilegeEscalation"), *allowEscalation, "Allowing privilege escalation for containers is not allowed"))
-		}
 	}
 
 	return allErrs

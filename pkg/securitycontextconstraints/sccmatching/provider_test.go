@@ -1349,6 +1349,10 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 
 	// Now set AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &yes
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
 	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 0 {
 		t.Errorf("directly allowing privilege escalation expected no errors but got %v", errs)
@@ -1356,6 +1360,10 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 
 	// Now set the scc spec to false and reset AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &no
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
 	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
 	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 1 {
@@ -1368,6 +1376,10 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 
 	// Now unset both AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &yes
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
 	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
 	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 0 {
