@@ -22,6 +22,12 @@ func (v containerValidatorFunc) ValidateContainer(fieldPath *field.Path, sc secu
 	return v(fieldPath, sc)
 }
 
+type containerMutatorFunc func(sc securitycontext.ContainerSecurityContextMutator) error
+
+func (m containerMutatorFunc) MutateContainer(sc securitycontext.ContainerSecurityContextMutator) error {
+	return m(sc)
+}
+
 func NewPodBoolChecker(fieldAccessor podBoolFieldAccessor, pathChild string, allowed bool, errorString string) sccapi.PodSecurityValidator {
 	return podValidatorFunc(func(fieldPath *field.Path, podSC securitycontext.PodSecurityContextAccessor) field.ErrorList {
 		allErrs := field.ErrorList{}
@@ -46,22 +52,32 @@ func checkPrivileged(privilegedAllowed bool) sccapi.ContainerSecurityValidator {
 	})
 }
 
-func checkReadOnlyFileSystem(readOnlyRootFSRequired bool) sccapi.ContainerSecurityValidator {
-	return containerValidatorFunc(func(fieldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
-		allErrs := field.ErrorList{}
-		if !readOnlyRootFSRequired {
+func readOnlyFileSystemAdmission(readOnlyRootFSRequired bool) (sccapi.ContainerSecurityMutator, sccapi.ContainerSecurityValidator) {
+	return containerMutatorFunc(func(sc securitycontext.ContainerSecurityContextMutator) error {
+			// if the SCC requires a read only root filesystem and the container has not made a specific
+			// request then default ReadOnlyRootFilesystem to true.
+			if readOnlyRootFSRequired && sc.ReadOnlyRootFilesystem() == nil {
+				readOnlyRootFS := true
+				sc.SetReadOnlyRootFilesystem(&readOnlyRootFS)
+			}
+			return nil
+		}),
+
+		containerValidatorFunc(func(fieldPath *field.Path, sc securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
+			allErrs := field.ErrorList{}
+			if !readOnlyRootFSRequired {
+				return allErrs
+			}
+
+			readOnly := sc.ReadOnlyRootFilesystem()
+			if readOnly == nil {
+				allErrs = append(allErrs, field.Invalid(fieldPath.Child("readOnlyRootFilesystem"), readOnly, "ReadOnlyRootFilesystem may not be nil and must be set to true"))
+			} else if !*readOnly {
+				allErrs = append(allErrs, field.Invalid(fieldPath.Child("readOnlyRootFilesystem"), *readOnly, "ReadOnlyRootFilesystem must be set to true"))
+			}
+
 			return allErrs
-		}
-
-		readOnly := sc.ReadOnlyRootFilesystem()
-		if readOnly == nil {
-			allErrs = append(allErrs, field.Invalid(fieldPath.Child("readOnlyRootFilesystem"), readOnly, "ReadOnlyRootFilesystem may not be nil and must be set to true"))
-		} else if !*readOnly {
-			allErrs = append(allErrs, field.Invalid(fieldPath.Child("readOnlyRootFilesystem"), *readOnly, "ReadOnlyRootFilesystem must be set to true"))
-		}
-
-		return allErrs
-	})
+		})
 }
 
 // checkAllowPrivilegeEscalation checks whether SUID bits are allowed in the container

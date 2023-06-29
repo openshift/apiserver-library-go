@@ -61,10 +61,13 @@ func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvi
 		},
 		containerValidators: []sccapi.ContainerSecurityValidator{
 			checkPrivileged(scc.AllowPrivilegedContainer),
-			checkReadOnlyFileSystem(scc.ReadOnlyRootFilesystem),
 			checkAllowPrivilegeEscalation(scc.AllowPrivilegeEscalation),
 		},
 	}
+
+	readOnlyFSMutator, readOnlyFSValidator := readOnlyFileSystemAdmission(scc.ReadOnlyRootFilesystem)
+	provider.containerMutators = append(provider.containerMutators, readOnlyFSMutator)
+	provider.containerValidators = append(provider.containerValidators, readOnlyFSValidator)
 
 	runAsUserStrategy, err := user.CreateUserStrategy(&scc.RunAsUser)
 	if err != nil {
@@ -206,13 +209,6 @@ func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container)
 		if nonRoot {
 			sc.SetRunAsNonRoot(&nonRoot)
 		}
-	}
-
-	// if the SCC requires a read only root filesystem and the container has not made a specific
-	// request then default ReadOnlyRootFilesystem to true.
-	if s.scc.ReadOnlyRootFilesystem && sc.ReadOnlyRootFilesystem() == nil {
-		readOnlyRootFS := true
-		sc.SetReadOnlyRootFilesystem(&readOnlyRootFS)
 	}
 
 	isPrivileged := sc.Privileged() != nil && *sc.Privileged()
