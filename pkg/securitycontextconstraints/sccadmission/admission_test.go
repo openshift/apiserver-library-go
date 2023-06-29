@@ -1022,7 +1022,7 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	// test forcing the usage of a lower priority that doesn't match
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
 	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPriorityAndScoreSCCOne.Name
-	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `pods "Unknown" is forbidden: unable to validate against any security context constraint: spec.containers[0].runAsUser: Invalid value: 5: must be: 6`, t) // TODO: get the provider name back in somehow
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `pods "Unknown" is forbidden: unable to validate against any security context constraint: spec.containers[0].securityContext.runAsUser: Invalid value: 5: must be: 6`, t) // TODO: get the provider name back in somehow
 
 	// test forcing the usage of scc that doesn't exist
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
