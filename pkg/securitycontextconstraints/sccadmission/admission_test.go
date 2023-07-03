@@ -946,6 +946,10 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriority := int32(5)
 	matchingPrioritySCCOne.Priority = &matchingPriority
 
+	matchingPrioritySCCOneNoAllowedGroups := matchingPrioritySCCOne.DeepCopy()
+	matchingPrioritySCCOneNoAllowedGroups.Name = "matchingPrioritySCCOneNoAllowedGroups"
+	matchingPrioritySCCOneNoAllowedGroups.Groups = []string{}
+
 	matchingPrioritySCCTwo := laxSCC()
 	matchingPrioritySCCTwo.Name = "matchingPrioritySCCTwo"
 	matchingPrioritySCCTwo.RunAsUser = securityv1.RunAsUserStrategyOptions{
@@ -975,10 +979,10 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCTwo.Priority = &matchingPriorityAndScorePriority
 
 	// we will expect these to sort as:
-	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCTwo",
+	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
 		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo"}
 	sccsToSort := []*securityv1.SecurityContextConstraints{matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
-		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted}
+		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups}
 
 	sort.Sort(sccsort.ByPriority(sccsToSort))
 
@@ -1009,6 +1013,27 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCOnePod := goodPod()
 	matchingPriorityAndScoreSCCOnePod.Spec.Containers[0].SecurityContext.RunAsUser = &uidSix
 	testSCCAdmission(matchingPriorityAndScoreSCCOnePod, plugin, matchingPriorityAndScoreSCCOne.Name, "match matchingPriorityAndScoreSCCOne by setting RunAsUser to 6", t)
+
+	// test forcing the usage of a lower priority SCC
+	matchingPrioritySCCOneForcingOtherPod := matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCTwo.Name
+	testSCCAdmission(matchingPrioritySCCOneForcingOtherPod, plugin, matchingPrioritySCCTwo.Name, "match matchingPrioritySCCTwo by annotation", t)
+
+	// test forcing the usage of a lower priority that doesn't match
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPriorityAndScoreSCCOne.Name
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `pods "Unknown" is forbidden: unable to validate against any security context constraint: provider matchingPriorityAndScoreSCCOne: .containers[0].runAsUser: Invalid value: 5: must be: 6`, t)
+
+	// test forcing the usage of scc that doesn't exist
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = "does-not-exist"
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "required scc/does-not-exist not found", t)
+
+	// test forcing the usage of scc that the user cannot use
+	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
+	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCOneNoAllowedGroups.Name
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "provider \"matchingPrioritySCCOneNoAllowedGroups\": Forbidden: not usable by user or serviceaccount", t)
+
 }
 
 func TestAdmitSeccomp(t *testing.T) {
@@ -1138,8 +1163,18 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
 
+	simplePodRequiringNotMutatingSCC := simplePod.DeepCopy()
+	simplePodRequiringNotMutatingSCC.Annotations = map[string]string{
+		securityv1.RequiredSCCAnnotation: nonMutatingSCC.Name,
+	}
+
 	modifiedPod := simplePod.DeepCopy()
 	modifiedPod.Spec.Containers[0].Image = "test-image:0.2"
+
+	modifiedPodRequiringMutatingSCC := modifiedPod.DeepCopy()
+	modifiedPodRequiringMutatingSCC.Annotations = map[string]string{
+		securityv1.RequiredSCCAnnotation: mutatingSCC.Name,
+	}
 
 	modifiedByEphemeralContainers := simplePod.DeepCopy()
 	modifiedByEphemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
@@ -1255,6 +1290,20 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			subresource: "ephemeralcontainers",
 			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC},
 			shouldPass:  false,
+		},
+		"updating: changing required SCC must fail": {
+			oldPod:     simplePodRequiringNotMutatingSCC.DeepCopy(),
+			newPod:     modifiedPodRequiringMutatingSCC.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass: false,
+		},
+		"updating: adding required SCC must fail": {
+			oldPod:     simplePod.DeepCopy(),
+			newPod:     modifiedPodRequiringMutatingSCC.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass: false,
 		},
 	}
 
@@ -1414,6 +1463,20 @@ func testSCCAdmission(pod *coreapi.Pod, plugin admission.Interface, expectedSCC,
 		return true
 	}
 	return false
+}
+
+func testSCCAdmissionError(pod *coreapi.Pod, plugin admission.Interface, expectedError string, t *testing.T) {
+	t.Helper()
+	attrs := admission.NewAttributesRecord(pod, nil, coreapi.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
+	err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
+	if err == nil {
+		t.Errorf("missing any error")
+		return
+	}
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("missing expected error %q in: %v", expectedError, err.Error())
+		return
+	}
 }
 
 func laxSCC() *securityv1.SecurityContextConstraints {
