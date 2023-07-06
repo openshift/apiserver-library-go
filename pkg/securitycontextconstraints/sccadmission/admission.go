@@ -92,7 +92,7 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 	if a.GetOperation() == admission.Update {
 		oldPod := a.GetOldObject().(*coreapi.Pod)
 
-		if pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] != oldPod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] {
+		if len(oldPod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation]) > 0 && pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] != oldPod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation] {
 			return admission.NewForbidden(a, fmt.Errorf("invalid change of required security context constraint annotation: %v", securityv1.RequiredSCCAnnotation))
 		}
 	}

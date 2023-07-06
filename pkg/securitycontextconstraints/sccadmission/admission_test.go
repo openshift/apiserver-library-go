@@ -1298,12 +1298,13 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
 			shouldPass: false,
 		},
-		"updating: adding required SCC must fail": {
-			oldPod:     simplePod.DeepCopy(),
-			newPod:     modifiedPodRequiringMutatingSCC.DeepCopy(),
-			operation:  admission.Update,
-			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
-			shouldPass: false,
+		"updating: adding required SCC must not fail": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      simplePodRequiringNotMutatingSCC.DeepCopy(),
+			operation:   admission.Update,
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			expectedSCC: nonMutatingSCC.Name,
+			shouldPass:  true,
 		},
 	}
 
