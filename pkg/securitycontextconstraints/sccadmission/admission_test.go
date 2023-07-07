@@ -2,6 +2,7 @@ package sccadmission
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -22,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
+	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 	"k8s.io/utils/pointer"
 )
 
@@ -99,7 +102,7 @@ func TestAdmitCaps(t *testing.T) {
 	allowAllInAllowed.AllowedCapabilities = []corev1.Capability{securityv1.AllowAllCapabilities}
 
 	tc := map[string]struct {
-		pod                  *coreapi.Pod
+		caps                 *coreapi.Capabilities
 		sccs                 []*securityv1.SecurityContextConstraints
 		shouldPass           bool
 		expectedCapabilities *coreapi.Capabilities
@@ -107,41 +110,40 @@ func TestAdmitCaps(t *testing.T) {
 		// UC 1: if an SCC does not define allowed or required caps then a pod requesting a cap
 		// should be rejected.
 		"should reject cap add when not allowed or required": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted},
 			shouldPass: false,
 		},
 		// UC 2: if an SCC allows a cap in the allowed field it should accept the pod request
 		// to add the cap.
 		"should accept cap add when in allowed": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowsFooInAllowed},
 			shouldPass: true,
 		},
 		// UC 3: if an SCC requires a cap then it should accept the pod request
 		// to add the cap.
 		"should accept cap add when in required": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowsFooInRequired},
 			shouldPass: true,
 		},
 		// UC 4: if an SCC requires a cap to be dropped then it should fail both
 		// in the verification of adds and verification of drops
 		"should reject cap add when requested cap is required to be dropped": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, requiresFooToBeDropped},
 			shouldPass: false,
 		},
 		// UC 5: if an SCC requires a cap to be dropped it should accept
 		// a manual request to drop the cap.
 		"should accept cap drop when cap is required to be dropped": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Drop: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Drop: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, requiresFooToBeDropped},
 			shouldPass: true,
 		},
 		// UC 6: required add is defaulted
 		"required add is defaulted": {
-			pod:        goodPod(),
 			sccs:       []*securityv1.SecurityContextConstraints{allowsFooInRequired},
 			shouldPass: true,
 			expectedCapabilities: &coreapi.Capabilities{
@@ -150,7 +152,6 @@ func TestAdmitCaps(t *testing.T) {
 		},
 		// UC 7: required drop is defaulted
 		"required drop is defaulted": {
-			pod:        goodPod(),
 			sccs:       []*securityv1.SecurityContextConstraints{requiresFooToBeDropped},
 			shouldPass: true,
 			expectedCapabilities: &coreapi.Capabilities{
@@ -159,60 +160,132 @@ func TestAdmitCaps(t *testing.T) {
 		},
 		// UC 8: using '*' in allowed caps
 		"should accept cap add when all caps are allowed": {
-			pod:        createPodWithCaps(&coreapi.Capabilities{Add: []coreapi.Capability{"foo"}}),
+			caps:       &coreapi.Capabilities{Add: []coreapi.Capability{"foo"}},
 			sccs:       []*securityv1.SecurityContextConstraints{restricted, allowAllInAllowed},
 			shouldPass: true,
 		},
 	}
 
-	for i := 0; i < 2; i++ {
-		for k, v := range tc {
-			t.Run(k, func(t *testing.T) {
-				v.pod.Spec.Containers, v.pod.Spec.InitContainers = v.pod.Spec.InitContainers, v.pod.Spec.Containers
-
-				testSCCAdmit(k, v.sccs, v.pod, v.shouldPass, t)
-
-				containers := v.pod.Spec.Containers
-				if i == 0 {
-					containers = v.pod.Spec.InitContainers
+	for k, v := range tc {
+		for i := 0; i < 3; i++ {
+			pod := goodPod()
+			if v.caps != nil {
+				pod = createPodWithCaps(v.caps)
+				switch i {
+				case 1:
+					// test init containers
+					pod.Spec.Containers, pod.Spec.InitContainers = nil, pod.Spec.Containers
+				case 2:
+					// test ephemeral containers
+					for _, c := range pod.Spec.Containers {
+						pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{SecurityContext: c.SecurityContext}})
+					}
+					pod.Spec.Containers = nil
 				}
+			}
+
+			t.Run(fmt.Sprintf("%s-%d", k, i), func(t *testing.T) {
+				testSCCAdmit(k, v.sccs, pod, v.shouldPass, t)
 
 				if v.expectedCapabilities != nil {
-					if !reflect.DeepEqual(v.expectedCapabilities, containers[0].SecurityContext.Capabilities) {
-						t.Errorf("%s resulted in caps that were not expected - expected: %#v, received: %#v", k, v.expectedCapabilities, containers[0].SecurityContext.Capabilities)
-					}
+					podhelpers.VisitContainersWithPath(
+						&pod.Spec, field.NewPath("testPodSpec"), func(container *coreapi.Container, path *field.Path) bool {
+							if !reflect.DeepEqual(v.expectedCapabilities, container.SecurityContext.Capabilities) {
+								t.Errorf("%s resulted in caps that were not expected at path %q - expected: %#v, received: %#v", k, path.String(), v.expectedCapabilities, container.SecurityContext.Capabilities)
+							}
+							return true
+						})
 				}
 			})
 		}
 	}
+
 }
 
 func TestShouldIgnore(t *testing.T) {
+	podCreationToAttributes := func(p *coreapi.Pod) admission.Attributes {
+		return admission.NewAttributesRecord(
+			p, nil,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			"",
+			admission.Create,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+
+	withUpdate := func(p *coreapi.Pod, subresource string, mutate func(p *coreapi.Pod) *coreapi.Pod) admission.Attributes {
+		updatedPod := mutate(p.DeepCopy())
+
+		return admission.NewAttributesRecord(
+			p, updatedPod,
+			coreapi.Kind("Pod").WithVersion("version"),
+			p.Namespace, p.Name,
+			coreapi.Resource("pods").WithVersion("version"),
+			subresource,
+			admission.Update,
+			nil,
+			false,
+			&user.DefaultInfo{},
+		)
+	}
+	withStatusUpdate := func(p *coreapi.Pod) admission.Attributes {
+		return withUpdate(p, "status", func(p *coreapi.Pod) *coreapi.Pod {
+			p.Status.Message = "The pod is in this state because it got there somehow"
+			return p
+		})
+	}
+
 	tests := []struct {
-		description  string
-		shouldIgnore bool
-		pod          *coreapi.Pod
+		description         string
+		shouldIgnore        bool
+		admissionAttributes admission.Attributes
 	}{
 		{
-			description:  "Windows pod should be ignored",
-			shouldIgnore: true,
-			pod:          windowsPod(),
+			description:         "Windows pod should be ignored",
+			shouldIgnore:        true,
+			admissionAttributes: podCreationToAttributes(windowsPod()),
 		},
 		{
-			description:  "Linux pod with OS field not set should not be ignored",
-			shouldIgnore: false,
-			pod:          goodPod(),
+			description:         "Linux pod with OS field not set should not be ignored",
+			shouldIgnore:        false,
+			admissionAttributes: podCreationToAttributes(goodPod()),
 		},
 		{
-			description:  "Linux pod with OS field explicitly set should not be ignored",
+			description:         "Linux pod with OS field explicitly set should not be ignored",
+			shouldIgnore:        false,
+			admissionAttributes: podCreationToAttributes(linuxPod()),
+		},
+		{
+			description:         "status updates are ignored",
+			shouldIgnore:        true,
+			admissionAttributes: withStatusUpdate(goodPod()),
+		},
+		{
+			description:  "don't ignore normal updates",
 			shouldIgnore: false,
-			pod:          linuxPod(),
+			admissionAttributes: withUpdate(goodPod(), "",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
+		},
+		{
+			description:  "don't ignore subresources outside the ignore list",
+			shouldIgnore: false,
+			admissionAttributes: withUpdate(goodPod(), "ephemeralcontainers",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, coreapi.EphemeralContainer{EphemeralContainerCommon: coreapi.EphemeralContainerCommon{Name: "another container"}})
+					return p
+				}),
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			attrs := admission.NewAttributesRecord(test.pod, nil, coreapi.Kind("Pod").WithVersion("version"), test.pod.Namespace, test.pod.Name, coreapi.Resource("pods").WithVersion("version"), "", admission.Create, nil, false, &user.DefaultInfo{})
-			ignored, err := shouldIgnore(attrs)
+			ignored, err := shouldIgnore(test.admissionAttributes)
 			if err != nil {
 				t.Errorf("expected the test to not error but it errored with %v", err)
 			}
@@ -1063,6 +1136,10 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	nonMutatingSCC := laxSCC()
 	nonMutatingSCC.Name = "non-mutating-scc"
 
+	restrictiveNonMutatingSCC := laxSCC()
+	restrictiveNonMutatingSCC.Name = "restrictive-non-mutating-scc"
+	restrictiveNonMutatingSCC.AllowHostPorts = false
+
 	simplePod := goodPod()
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
@@ -1070,28 +1147,72 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 	modifiedPod := simplePod.DeepCopy()
 	modifiedPod.Spec.Containers[0].Image = "test-image:0.2"
 
+	modifiedByEphemeralContainers := simplePod.DeepCopy()
+	modifiedByEphemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
+		{
+			EphemeralContainerCommon: coreapi.EphemeralContainerCommon{
+				SecurityContext: &coreapi.SecurityContext{},
+			},
+		},
+	}
+
+	modifiedByHostPortEphemeralContainers := modifiedByEphemeralContainers.DeepCopy()
+	modifiedByHostPortEphemeralContainers.Spec.EphemeralContainers[0].Ports = []coreapi.ContainerPort{
+		{
+			HostPort: 80,
+		},
+	}
+
+	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC)
+	if err != nil {
+		t.Fatalf("failed to create a mutating provider: %v", err)
+	}
+	mutatedPod := simplePod.DeepCopy()
+	mutatedPod.Spec.SecurityContext, mutatedPod.Annotations, err = mutatingProvider.CreatePodSecurityContext(mutatedPod)
+	if err != nil {
+		t.Fatalf("failed to mutate the pod: %v", err)
+	}
+
+	mutatedPod.Spec.Containers[0].SecurityContext, err = mutatingProvider.CreateContainerSecurityContext(
+		mutatedPod,
+		&mutatedPod.Spec.Containers[0],
+	)
+	if err != nil {
+		t.Fatalf("failed to mutate the container: %v", err)
+	}
+
+	mutatedPodModifiedByEpehemeralContainers := mutatedPod.DeepCopy()
+	mutatedPodModifiedByEpehemeralContainers.Spec.EphemeralContainers = []coreapi.EphemeralContainer{
+		{
+			EphemeralContainerCommon: coreapi.EphemeralContainerCommon{
+				SecurityContext: &coreapi.SecurityContext{},
+			},
+		},
+	}
+
 	tests := map[string]struct {
 		oldPod      *coreapi.Pod
 		newPod      *coreapi.Pod
 		operation   admission.Operation
+		subresource string
 		sccs        []*securityv1.SecurityContextConstraints
 		shouldPass  bool
 		expectedSCC string
 	}{
-		"creation: the first SCC (even if it mutates) should be used": {
+		"creation: most restrictive SCC (even if it mutates) should be used": {
 			newPod:      simplePod.DeepCopy(),
 			operation:   admission.Create,
-			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC, mutatingSCC, nonMutatingSCC},
 			shouldPass:  true,
 			expectedSCC: mutatingSCC.Name,
 		},
-		"updating: the first non-mutating SCC should be used": {
+		"updating: most restrictive non-mutating SCC should be used": {
 			oldPod:      simplePod.DeepCopy(),
 			newPod:      modifiedPod.DeepCopy(),
 			operation:   admission.Update,
-			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC, restrictiveNonMutatingSCC},
 			shouldPass:  true,
-			expectedSCC: nonMutatingSCC.Name,
+			expectedSCC: restrictiveNonMutatingSCC.Name,
 		},
 		"updating: a pod should be rejected when there are only mutating SCCs": {
 			oldPod:     simplePod.DeepCopy(),
@@ -1099,6 +1220,47 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			operation:  admission.Update,
 			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC},
 			shouldPass: false,
+		},
+		"updating ephemeral containers: the first non-mutating SCC should be used": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC, nonMutatingSCC},
+			shouldPass:  true,
+			expectedSCC: nonMutatingSCC.Name,
+		},
+		"updating ephemeral containers: only an SCC that also mutates the rest of the pod is available": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass:  false,
+		},
+		"updating ephemeral containers: only an SCC that would mutate the new container is available": {
+			oldPod:      mutatedPod.DeepCopy(),
+			newPod:      mutatedPodModifiedByEpehemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass:  true,
+			expectedSCC: mutatingSCC.Name,
+		},
+		"updating ephemeral containers without subresource: only an SCC that would mutate the new container is available": {
+			oldPod:     mutatedPod.DeepCopy(),
+			newPod:     mutatedPodModifiedByEpehemeralContainers.DeepCopy(),
+			operation:  admission.Update,
+			sccs:       []*securityv1.SecurityContextConstraints{mutatingSCC},
+			shouldPass: false,
+		},
+		"updating ephemeral containers: only a non-mutating non-matching SCC": {
+			oldPod:      simplePod.DeepCopy(),
+			newPod:      modifiedByHostPortEphemeralContainers.DeepCopy(),
+			operation:   admission.Update,
+			subresource: "ephemeralcontainers",
+			sccs:        []*securityv1.SecurityContextConstraints{restrictiveNonMutatingSCC},
+			shouldPass:  false,
 		},
 	}
 
@@ -1111,7 +1273,7 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		testAuthorizer := &sccTestAuthorizer{t: t}
 		plugin := newTestAdmission(lister, tc, testAuthorizer)
 
-		attrs := admission.NewAttributesRecord(testCase.newPod, testCase.oldPod, coreapi.Kind("Pod").WithVersion("version"), testCase.newPod.Namespace, testCase.newPod.Name, coreapi.Resource("pods").WithVersion("version"), "", testCase.operation, nil, false, &user.DefaultInfo{})
+		attrs := admission.NewAttributesRecord(testCase.newPod, testCase.oldPod, coreapi.Kind("Pod").WithVersion("version"), testCase.newPod.Namespace, testCase.newPod.Name, coreapi.Resource("pods").WithVersion("version"), testCase.subresource, testCase.operation, nil, false, &user.DefaultInfo{})
 		err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
 
 		if testCase.shouldPass {
