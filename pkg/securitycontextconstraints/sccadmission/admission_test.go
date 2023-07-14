@@ -222,7 +222,7 @@ func TestShouldIgnore(t *testing.T) {
 		updatedPod := mutate(p.DeepCopy())
 
 		return admission.NewAttributesRecord(
-			p, updatedPod,
+			updatedPod, p,
 			coreapi.Kind("Pod").WithVersion("version"),
 			p.Namespace, p.Name,
 			coreapi.Resource("pods").WithVersion("version"),
