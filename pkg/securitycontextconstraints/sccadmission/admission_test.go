@@ -1027,7 +1027,7 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	// test forcing the usage of scc that doesn't exist
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
 	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = "does-not-exist"
-	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "required scc/does-not-exist not found", t)
+	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, `failed to retrieve the required SCC "does-not-exist": securitycontextconstraints.security.openshift.io "does-not-exist" not found`, t)
 
 	// test forcing the usage of scc that the user cannot use
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
