@@ -4,7 +4,6 @@ go 1.20
 
 require (
 	github.com/google/go-cmp v0.5.9
-	github.com/hashicorp/golang-lru v0.5.1
 	github.com/openshift/api v0.0.0-20230703113031-f81f8f05a432
 	github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
 	github.com/openshift/client-go v0.0.0-20230503144108-75015d2347cb
