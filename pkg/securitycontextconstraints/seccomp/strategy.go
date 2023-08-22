@@ -61,13 +61,13 @@ func NewSeccompStrategy(allowedProfiles []string) SeccompStrategy {
 
 // Generate returns a profile based on constraint rules.
 func (s *strategy) Generate(podAnnotations map[string]string, pod *api.Pod) (string, error) {
-	if podAnnotations[api.SeccompPodAnnotationKey] != "" {
-		// Profile already set, nothing to do.
-		return podAnnotations[api.SeccompPodAnnotationKey], nil
-	}
 	if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.SeccompProfile != nil {
 		// Profile field already set, translate to annotation.
 		return seccompAnnotationForField(pod.Spec.SecurityContext.SeccompProfile), nil
+	}
+	if podAnnotations[api.SeccompPodAnnotationKey] != "" {
+		// Profile already set, nothing to do.
+		return podAnnotations[api.SeccompPodAnnotationKey], nil
 	}
 
 	// return the first non-wildcard profile
