@@ -4,10 +4,10 @@ go 1.20
 
 require (
 	github.com/google/go-cmp v0.5.9
-	github.com/openshift/api v0.0.0-20230914190027-15f6221a9976
+	github.com/openshift/api v0.0.0-20230915112357-693d4b64813c
 	github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
-	github.com/openshift/client-go v0.0.0-20230914193126-2dabb8ff4ca8
-	github.com/openshift/library-go v0.0.0-20230914194421-9392278713e7
+	github.com/openshift/client-go v0.0.0-20230915115245-53bd8980dfb7
+	github.com/openshift/library-go v0.0.0-20230915122714-b753831a0dce
 	github.com/stretchr/testify v1.8.2
 	k8s.io/api v0.28.2
 	k8s.io/apimachinery v0.28.2
@@ -68,8 +68,8 @@ require (
 	k8s.io/apiextensions-apiserver v0.28.2 // indirect
 	k8s.io/component-base v0.28.2 // indirect
 	k8s.io/component-helpers v0.25.0 // indirect
-	k8s.io/gengo v0.0.0-20230829151522-9cce18d56c01 // indirect
-	k8s.io/kube-openapi v0.0.0-20230905202853-d090da108d2f // indirect
+	k8s.io/gengo v0.0.0-20220902162205-c0856e24416d // indirect
+	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
