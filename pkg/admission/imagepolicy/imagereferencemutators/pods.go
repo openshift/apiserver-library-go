@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/batch"
@@ -179,6 +181,22 @@ func GetTemplateMetaObject(obj runtime.Object) (metav1.Object, bool) {
 		return &r.Spec.Template.ObjectMeta, true
 	}
 	return nil, false
+}
+
+func GetPodTemplateSupportedGroupKinds() sets.Set[schema.GroupKind] {
+	return sets.New[schema.GroupKind](
+		schema.GroupKind{Group: core.GroupName, Kind: "PodTemplate"},
+		schema.GroupKind{Group: core.GroupName, Kind: "ReplicationController"},
+		schema.GroupKind{Group: apps.GroupName, Kind: "DaemonSet"},
+		schema.GroupKind{Group: apps.GroupName, Kind: "Deployment"},
+		schema.GroupKind{Group: apps.GroupName, Kind: "ReplicaSet"},
+		schema.GroupKind{Group: apps.GroupName, Kind: "StatefulSet"},
+		schema.GroupKind{Group: extensionsv1beta1.GroupName, Kind: "DaemonSet"},
+		schema.GroupKind{Group: extensionsv1beta1.GroupName, Kind: "Deployment"},
+		schema.GroupKind{Group: extensionsv1beta1.GroupName, Kind: "ReplicaSet"},
+		schema.GroupKind{Group: batch.GroupName, Kind: "Job"},
+		schema.GroupKind{Group: batch.GroupName, Kind: "CronJob"},
+	)
 }
 
 type containerMutator struct {

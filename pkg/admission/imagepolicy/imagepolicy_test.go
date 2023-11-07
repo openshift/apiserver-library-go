@@ -25,6 +25,7 @@ import (
 	kcache "k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/utils/ptr"
 
 	"github.com/openshift/api/image"
 	imagev1 "github.com/openshift/api/image/v1"
@@ -341,147 +342,158 @@ func TestAdmissionWithoutPodSpec(t *testing.T) {
 }
 
 func TestAdmissionResolution(t *testing.T) {
-	onResources := []metav1.GroupResource{{Resource: "pods"}}
-	p, err := NewImagePolicyPlugin(&imagepolicy.ImagePolicyConfig{
-		ResolveImages: imagepolicy.AttemptRewrite,
-		ExecutionRules: []imagepolicy.ImageExecutionPolicyRule{
-			{ImageCondition: imagepolicy.ImageCondition{OnResources: onResources}},
-			{Reject: true, ImageCondition: imagepolicy.ImageCondition{
-				OnResources:     onResources,
-				MatchRegistries: []string{"index.docker.io"},
-			}},
+	testCases := []struct {
+		name string
+
+		ownerReferences       []metav1.OwnerReference
+		expectedResolvedImage string
+	}{
+		{
+			name:                  "admission resolution works",
+			ownerReferences:       nil,
+			expectedResolvedImage: "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4",
 		},
-	})
-	p.SetImageMutators(imagereferencemutators.KubeImageMutators{})
-	setDefaultCache(p)
-
-	resolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
-		error) {
-		switch ref.Name {
-		case "index.docker.io/mysql:latest":
-			return &rules.ImagePolicyAttributes{
-				Name:  reference.DockerImageReference{Registry: "index.docker.io", Name: "mysql", Tag: "latest"},
-				Image: &imagev1.Image{ObjectMeta: metav1.ObjectMeta{Name: "1"}},
-			}, nil
-		case "myregistry.com/mysql/mysql:latest",
-			"myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4":
-			return &rules.ImagePolicyAttributes{
-				Name:  reference.DockerImageReference{Registry: "myregistry.com", Namespace: "mysql", Name: "mysql", ID: "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"},
-				Image: &imagev1.Image{ObjectMeta: metav1.ObjectMeta{Name: "2"}},
-			}, nil
-		}
-		t.Fatalf("unexpected call to resolve image: %v", ref)
-		return nil, nil
-	})
-	nonWorkingResolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
-		error) {
-		return nil, fmt.Errorf("could not resolve %v", ref.Name)
-	})
-
-	p.resolver = resolver
-
-	if err != nil {
-		t.Fatal(err)
+		{
+			name:                  "admission resolution works for pods with unknown controllers",
+			ownerReferences:       []metav1.OwnerReference{{Controller: ptr.To(true), APIVersion: "apps.custom.io/v1", Kind: "CustomReplicaSet"}},
+			expectedResolvedImage: "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4",
+		},
+		{
+			name:                  "skip admission resolution for pods with known controllers",
+			ownerReferences:       []metav1.OwnerReference{{Controller: ptr.To(true), APIVersion: "apps/v1", Kind: "ReplicaSet"}},
+			expectedResolvedImage: "myregistry.com/mysql/mysql:latest",
+		},
+		{
+			name:                  "skip admission resolution for pods with known controllers without a group",
+			ownerReferences:       []metav1.OwnerReference{{Controller: ptr.To(true), APIVersion: "v1", Kind: "ReplicationController"}},
+			expectedResolvedImage: "myregistry.com/mysql/mysql:latest",
+		},
 	}
-	if !p.Handles(admission.Create) {
-		t.Fatal("expected to handle create")
-	}
-	failingAttrs := admission.NewAttributesRecord(
-		&kapi.Pod{
-			Spec: kapi.PodSpec{
-				Containers: []kapi.Container{
-					{Image: "index.docker.io/mysql:latest"},
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			onResources := []metav1.GroupResource{{Resource: "pods"}}
+			p, err := NewImagePolicyPlugin(&imagepolicy.ImagePolicyConfig{
+				ResolveImages: imagepolicy.AttemptRewrite,
+				ExecutionRules: []imagepolicy.ImageExecutionPolicyRule{
+					{ImageCondition: imagepolicy.ImageCondition{OnResources: onResources}},
+					{Reject: true, ImageCondition: imagepolicy.ImageCondition{
+						OnResources:     onResources,
+						MatchRegistries: []string{"index.docker.io"},
+					}},
 				},
-			},
-		},
-		nil, schema.GroupVersionKind{Version: "v1", Kind: "Pod"},
-		"default", "pod1", schema.GroupVersionResource{Version: "v1", Resource: "pods"},
-		"", admission.Create,
-		nil,
-		false,
-		nil,
-	)
-	if err := p.Admit(context.TODO(), failingAttrs, nil); err == nil {
-		t.Fatal(err)
-	}
-	if err := p.Validate(context.TODO(), failingAttrs, nil); err == nil {
-		t.Fatal(err)
-	}
+			})
+			p.SetImageMutators(imagereferencemutators.KubeImageMutators{})
+			setDefaultCache(p)
 
-	pod := &kapi.Pod{
-		Spec: kapi.PodSpec{
-			Containers: []kapi.Container{
-				{Image: "myregistry.com/mysql/mysql:latest"},
-				{Image: "myregistry.com/mysql/mysql:latest"},
-			},
-		},
-	}
-	attrs := admission.NewAttributesRecord(
-		pod,
-		nil, schema.GroupVersionKind{Version: "v1", Kind: "Pod"},
-		"default", "pod1", schema.GroupVersionResource{Version: "v1", Resource: "pods"},
-		"", admission.Create, nil, false, nil,
-	)
+			resolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
+				error) {
+				switch ref.Name {
+				case "index.docker.io/mysql:latest":
+					return &rules.ImagePolicyAttributes{
+						Name:  reference.DockerImageReference{Registry: "index.docker.io", Name: "mysql", Tag: "latest"},
+						Image: &imagev1.Image{ObjectMeta: metav1.ObjectMeta{Name: "1"}},
+					}, nil
+				case "myregistry.com/mysql/mysql:latest",
+					"myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4":
+					return &rules.ImagePolicyAttributes{
+						Name:  reference.DockerImageReference{Registry: "myregistry.com", Namespace: "mysql", Name: "mysql", ID: "sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"},
+						Image: &imagev1.Image{ObjectMeta: metav1.ObjectMeta{Name: "2"}},
+					}, nil
+				}
+				t.Fatalf("unexpected call to resolve image: %v", ref)
+				return nil, nil
+			})
+			nonWorkingResolver := resolveFunc(func(ref *kapi.ObjectReference, defaultNamespace string, forceLocalResolve bool) (*rules.ImagePolicyAttributes,
+				error) {
+				return nil, fmt.Errorf("could not resolve %v", ref.Name)
+			})
 
-	// when Admit fails to resolve but suddenly the resolver starts working in Validate
-	// - do not change the image in validate to be consistent and atomic with Admit
-	// - this allows creation of objects like imagestreams in between admit and validate
-	p.resolver = nonWorkingResolver
-	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
-		t.Errorf("unexpected image: %#v", pod)
-	}
-	p.resolver = resolver
-	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
-		t.Errorf("unexpected image: %#v", pod)
-	}
+			p.resolver = resolver
 
-	// skip resolution for objects with controller owner references
-	hasController := true
-	pod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{{Controller: &hasController}}
-	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
-		t.Errorf("unexpected image: %#v", pod)
-	}
-	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
-		t.Errorf("unexpected image: %#v", pod)
-	}
-	pod.ObjectMeta.OwnerReferences = nil
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !p.Handles(admission.Create) {
+				t.Fatal("expected to handle create")
+			}
+			failingAttrs := admission.NewAttributesRecord(
+				&kapi.Pod{
+					Spec: kapi.PodSpec{
+						Containers: []kapi.Container{
+							{Image: "index.docker.io/mysql:latest"},
+						},
+					},
+				},
+				nil, schema.GroupVersionKind{Version: "v1", Kind: "Pod"},
+				"default", "pod1", schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+				"", admission.Create,
+				nil,
+				false,
+				nil,
+			)
+			if err := p.Admit(context.TODO(), failingAttrs, nil); err == nil {
+				t.Fatal(err)
+			}
+			if err := p.Validate(context.TODO(), failingAttrs, nil); err == nil {
+				t.Fatal(err)
+			}
 
-	// working resolution
-	if err := p.Admit(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" {
-		t.Errorf("unexpected image: %#v", pod)
-	}
-	if err := p.Validate(context.TODO(), attrs, nil); err != nil {
-		t.Logf("object: %#v", attrs.GetObject())
-		t.Fatal(err)
-	}
-	if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" ||
-		pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql@sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4" {
-		t.Errorf("unexpected image: %#v", pod)
+			pod := &kapi.Pod{
+				Spec: kapi.PodSpec{
+					Containers: []kapi.Container{
+						{Image: "myregistry.com/mysql/mysql:latest"},
+						{Image: "myregistry.com/mysql/mysql:latest"},
+					},
+				},
+			}
+			attrs := admission.NewAttributesRecord(
+				pod,
+				nil, schema.GroupVersionKind{Version: "v1", Kind: "Pod"},
+				"default", "pod1", schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+				"", admission.Create, nil, false, nil,
+			)
+
+			// when Admit fails to resolve but suddenly the resolver starts working in Validate
+			// - do not change the image in validate to be consistent and atomic with Admit
+			// - this allows creation of objects like imagestreams in between admit and validate
+			p.resolver = nonWorkingResolver
+			if err := p.Admit(context.TODO(), attrs, nil); err != nil {
+				t.Logf("object: %#v", attrs.GetObject())
+				t.Fatal(err)
+			}
+			if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+				pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+				t.Errorf("unexpected image: %#v", pod)
+			}
+			p.resolver = resolver
+			if err := p.Validate(context.TODO(), attrs, nil); err != nil {
+				t.Logf("object: %#v", attrs.GetObject())
+				t.Fatal(err)
+			}
+			if pod.Spec.Containers[0].Image != "myregistry.com/mysql/mysql:latest" ||
+				pod.Spec.Containers[1].Image != "myregistry.com/mysql/mysql:latest" {
+				t.Errorf("unexpected image: %#v", pod)
+			}
+
+			// image resolution
+			pod.ObjectMeta.OwnerReferences = test.ownerReferences
+			if err := p.Admit(context.TODO(), attrs, nil); err != nil {
+				t.Logf("object: %#v", attrs.GetObject())
+				t.Fatal(err)
+			}
+			if pod.Spec.Containers[0].Image != test.expectedResolvedImage ||
+				pod.Spec.Containers[1].Image != test.expectedResolvedImage {
+				t.Errorf("unexpected image: %#v", pod)
+			}
+			if err := p.Validate(context.TODO(), attrs, nil); err != nil {
+				t.Logf("object: %#v", attrs.GetObject())
+				t.Fatal(err)
+			}
+			if pod.Spec.Containers[0].Image != test.expectedResolvedImage ||
+				pod.Spec.Containers[1].Image != test.expectedResolvedImage {
+				t.Errorf("unexpected image: %#v", pod)
+			}
+		})
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/diff"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -198,7 +199,16 @@ func (a *ImagePolicyPlugin) admit(ctx context.Context, attr admission.Attributes
 	if obj, ok := attr.GetObject().(metav1.Object); ok {
 		for _, ownerRef := range obj.GetOwnerReferences() {
 			if ownerRef.Controller != nil && *ownerRef.Controller {
-				klog.V(5).Infof("skipping image policy admission for %s:%s/%s, reason: has controller owner reference", attr.GetKind(), attr.GetNamespace(), attr.GetName())
+				gv, err := schema.ParseGroupVersion(ownerRef.APIVersion)
+				if err != nil {
+					return err
+				}
+				gk := schema.GroupKind{Group: gv.Group, Kind: ownerRef.Kind}
+				if !imagereferencemutators.GetPodTemplateSupportedGroupKinds().Has(gk) {
+					// allow objects of controllers that we do not manage to be admitted and mutated by this admission plugin
+					continue
+				}
+				klog.V(5).Infof("skipping image policy admission for %s:%s/%s, reason: has controller owner reference and the controller is admitted by this plugin", attr.GetKind(), attr.GetNamespace(), attr.GetName())
 				return nil
 			}
 		}
