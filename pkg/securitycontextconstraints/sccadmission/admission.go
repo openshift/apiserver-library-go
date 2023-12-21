@@ -298,7 +298,7 @@ func (c *constraint) computeSecurityContext(
 
 	appliesToPod := func(provider sccmatching.SecurityContextConstraintsProvider, pod *coreapi.Pod) (podCopy *coreapi.Pod, errs field.ErrorList) {
 		podCopy = pod.DeepCopy()
-		if errs := sccmatching.AssignSecurityContext(provider, podCopy, field.NewPath(fmt.Sprintf("provider %s: ", provider.GetSCCName()))); len(errs) > 0 {
+		if errs := provider.ApplyToPod(podCopy); len(errs) > 0 {
 			return nil, errs
 		}
 		return podCopy, nil
@@ -336,6 +336,7 @@ loop:
 
 		podCopy, errs := appliesToPod(provider, pod)
 		if len(errs) > 0 {
+			// TODO: validationErrs should be mapped to the provider name in the final output
 			validationErrs = append(validationErrs, errs...)
 			failures[provider.GetSCCName()] = errs.ToAggregate().Error()
 			continue

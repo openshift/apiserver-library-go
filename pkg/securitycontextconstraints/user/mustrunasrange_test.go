@@ -50,11 +50,13 @@ func TestMustRunAsRangeGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewMustRunAsRange %v", err)
 	}
-	generated, err := mustRunAsRange.Generate(nil, nil)
+
+	sc := mutatorForUser(nil, nil)
+	err = mustRunAsRange.MutateContainer(sc)
 	if err != nil {
 		t.Fatalf("unexpected error generating uid %v", err)
 	}
-	if *generated != uidMin {
+	if *sc.RunAsUser() != uidMin {
 		t.Errorf("generated uid does not equal expected uid")
 	}
 }
@@ -68,7 +70,7 @@ func TestMustRunAsRangeValidate(t *testing.T) {
 		t.Fatalf("unexpected error initializing NewMustRunAsRange %v", err)
 	}
 
-	errs := mustRunAsRange.Validate(nil, nil, nil, nil, nil)
+	errs := mustRunAsRange.ValidateContainer(nil, accessorForUser(nil, nil))
 	expectedMessage := "runAsUser: Required value"
 	if len(errs) == 0 {
 		t.Errorf("expected errors from nil runAsUser but got none")
@@ -77,7 +79,7 @@ func TestMustRunAsRangeValidate(t *testing.T) {
 	}
 
 	var lowUid int64 = 0
-	errs = mustRunAsRange.Validate(nil, nil, nil, nil, &lowUid)
+	errs = mustRunAsRange.ValidateContainer(nil, accessorForUser(nil, &lowUid))
 	expectedMessage = fmt.Sprintf("runAsUser: Invalid value: %d: must be in the ranges: [%d, %d]", lowUid, uidMin, uidMax)
 	if len(errs) == 0 {
 		t.Errorf("expected errors from mismatch uid but got none")
@@ -86,7 +88,7 @@ func TestMustRunAsRangeValidate(t *testing.T) {
 	}
 
 	var highUid int64 = 11
-	errs = mustRunAsRange.Validate(nil, nil, nil, nil, &highUid)
+	errs = mustRunAsRange.ValidateContainer(nil, accessorForUser(nil, &highUid))
 	expectedMessage = fmt.Sprintf("runAsUser: Invalid value: %d: must be in the ranges: [%d, %d]", highUid, uidMin, uidMax)
 	if len(errs) == 0 {
 		t.Errorf("expected errors from mismatch uid but got none")
@@ -95,7 +97,7 @@ func TestMustRunAsRangeValidate(t *testing.T) {
 	}
 
 	var goodUid int64 = 5
-	errs = mustRunAsRange.Validate(nil, nil, nil, nil, &goodUid)
+	errs = mustRunAsRange.ValidateContainer(nil, accessorForUser(nil, &goodUid))
 	if len(errs) != 0 {
 		t.Errorf("expected no errors from matching uid but got %v", errs)
 	}

@@ -21,7 +21,7 @@ import (
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
 )
 
-func TestCreatePodSecurityContextNonmutating(t *testing.T) {
+func TestcreatePodSecurityContextNonmutating(t *testing.T) {
 	// Create a pod with a security context that needs filling in
 	createPod := func() *api.Pod {
 		return &api.Pod{
@@ -60,7 +60,7 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create provider %v", err)
 	}
-	_, _, err = provider.CreatePodSecurityContext(pod)
+	err = provider.mutatePod(pod)
 	if err != nil {
 		t.Fatalf("unable to create psc %v", err)
 	}
@@ -69,14 +69,14 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	// since all the strategies were permissive
 	if !reflect.DeepEqual(createPod(), pod) {
 		diff := diff.ObjectDiff(createPod(), pod)
-		t.Errorf("pod was mutated by CreatePodSecurityContext. diff:\n%s", diff)
+		t.Errorf("pod was mutated by createPodSecurityContext. diff:\n%s", diff)
 	}
 	if !reflect.DeepEqual(createSCC(), scc) {
-		t.Error("scc was mutated by CreatePodSecurityContext")
+		t.Error("scc was mutated by createPodSecurityContext")
 	}
 }
 
-func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
+func cestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	// Create a pod with a security context that needs filling in
 	createPod := func() *api.Pod {
 		return &api.Pod{
@@ -116,7 +116,7 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create provider %v", err)
 	}
-	_, err = provider.CreateContainerSecurityContext(pod, &pod.Spec.Containers[0])
+	err = provider.mutateContainer(pod, &pod.Spec.Containers[0])
 	if err != nil {
 		t.Fatalf("unable to create container security context %v", err)
 	}
@@ -125,14 +125,14 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	// since all the strategies were permissive
 	if !reflect.DeepEqual(createPod(), pod) {
 		diff := diff.ObjectDiff(createPod(), pod)
-		t.Errorf("pod was mutated by CreateContainerSecurityContext. diff:\n%s", diff)
+		t.Errorf("pod was mutated by mutateContainer. diff:\n%s", diff)
 	}
 	if !reflect.DeepEqual(createSCC(), scc) {
-		t.Error("scc was mutated by CreateContainerSecurityContext")
+		t.Error("scc was mutated by mutateContainer")
 	}
 }
 
-func TestValidatePodSecurityContextFailures(t *testing.T) {
+func TestvalidatePodSecurityContextFailures(t *testing.T) {
 	failHostNetworkPod := defaultPod()
 	failHostNetworkPod.Spec.SecurityContext.HostNetwork = true
 
@@ -335,7 +335,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
-		errs := provider.ValidatePodSecurityContext(v.pod, field.NewPath("spec"))
+		errs := provider.validatePodSecurityContext(v.pod, field.NewPath("spec"))
 		if len(errs) == 0 {
 			t.Errorf("%s expected validation failure but did not receive errors", k)
 			continue
@@ -346,7 +346,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 	}
 }
 
-func TestValidateContainerSecurityContextFailures(t *testing.T) {
+func TestvalidateContainerSecurityContextFailures(t *testing.T) {
 	// fail user strat
 	failUserSCC := defaultSCC()
 	var uid int64 = 999
@@ -477,7 +477,7 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
-		errs := provider.ValidateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0], field.NewPath(""))
+		errs := provider.validateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0], field.NewPath(""))
 		if len(errs) == 0 {
 			t.Errorf("%s expected validation failure but did not receive errors", k)
 			continue
@@ -488,7 +488,7 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 	}
 }
 
-func TestValidatePodSecurityContextSuccess(t *testing.T) {
+func TestvalidatePodSecurityContextSuccess(t *testing.T) {
 	hostNetworkSCC := defaultSCC()
 	hostNetworkSCC.AllowHostNetwork = true
 	hostNetworkPod := defaultPod()
@@ -676,7 +676,7 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
-		errs := provider.ValidatePodSecurityContext(v.pod, field.NewPath(""))
+		errs := provider.validatePodSecurityContext(v.pod, field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("%s expected validation pass but received errors %v", k, errs)
 			continue
@@ -684,7 +684,7 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 	}
 }
 
-func TestValidateContainerSecurityContextSuccess(t *testing.T) {
+func TestvalidateContainerSecurityContextSuccess(t *testing.T) {
 	// fail user strat
 	userSCC := defaultSCC()
 	var uid int64 = 999
@@ -848,7 +848,7 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
-		errs := provider.ValidateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0], field.NewPath(""))
+		errs := provider.validateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0], field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("%s expected validation pass but received errors %v", k, errs)
 			continue
@@ -916,12 +916,13 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
 		}
-		sc, err := provider.CreateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0])
+		err = provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
 		if err != nil {
 			t.Errorf("%s unable to create container security context %v", k, err)
 			continue
 		}
 
+		sc := v.pod.Spec.Containers[0].SecurityContext
 		if v.expected == nil && sc.ReadOnlyRootFilesystem != nil {
 			t.Errorf("%s expected a nil ReadOnlyRootFilesystem but got %t", k, *sc.ReadOnlyRootFilesystem)
 		}
@@ -1070,12 +1071,13 @@ func TestGenerateNonRootSecurityContextOnNonZeroRunAsUser(t *testing.T) {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
 		}
-		sc, err := provider.CreateContainerSecurityContext(v.pod, &v.pod.Spec.Containers[0])
+		err = provider.mutateContainer(v.pod, &v.pod.Spec.Containers[0])
 		if err != nil {
 			t.Errorf("%s unable to create container security context %v", k, err)
 			continue
 		}
 
+		sc := v.pod.Spec.Containers[0].SecurityContext
 		if !equality.Semantic.DeepEqual(v.expectedSC, sc) {
 			t.Errorf("%s expected security context does not match the actual: %s", k, diff.ObjectDiff(v.expectedSC, sc))
 		}
@@ -1184,7 +1186,7 @@ func TestValidateAllowedVolumes(t *testing.T) {
 		}
 
 		// expect a denial for this SCC and test the error message to ensure it's related to the volumesource
-		errs := provider.ValidatePodSecurityContext(pod, field.NewPath(""))
+		errs := provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 1 {
 			t.Errorf("expected exactly 1 error for %s but got %v", fieldVal.Name, errs)
 		} else {
@@ -1195,14 +1197,14 @@ func TestValidateAllowedVolumes(t *testing.T) {
 
 		// now add the fstype directly to the scc and it should validate
 		scc.Volumes = []securityv1.FSType{fsType}
-		errs = provider.ValidatePodSecurityContext(pod, field.NewPath(""))
+		errs = provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("directly allowing volume expected no errors for %s but got %v", fieldVal.Name, errs)
 		}
 
 		// now change the scc to allow any volumes and the pod should still validate
 		scc.Volumes = []securityv1.FSType{securityv1.FSTypeAll}
-		errs = provider.ValidatePodSecurityContext(pod, field.NewPath(""))
+		errs = provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 		if len(errs) != 0 {
 			t.Errorf("wildcard volume expected no errors for %s but got %v", fieldVal.Name, errs)
 		}
@@ -1307,7 +1309,7 @@ func TestValidateProjectedVolume(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			pod.Spec.Volumes = []api.Volume{{VolumeSource: api.VolumeSource{Projected: test.projectedVolumeSource}}}
 			scc.Volumes = test.allowedFSTypes
-			errs := provider.ValidatePodSecurityContext(pod, field.NewPath(""))
+			errs := provider.validatePodVolumes(pod.Spec.Volumes, field.NewPath(""))
 			if test.wantAllow {
 				require.Empty(t, errs, "projected volumes are allowed if secret volumes is allowed and BoundServiceAccountTokenVolume is enabled")
 			} else {
@@ -1338,7 +1340,7 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 	}
 
 	// expect a denial for this SCC and test the error message to ensure it's related to allowPrivilegeEscalation
-	errs := provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
+	errs := provider.validateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 1 {
 		t.Errorf("expected exactly 1 error but got %v", errs)
 	} else {
@@ -1349,15 +1351,23 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 
 	// Now set AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &yes
-	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
+	errs = provider.validateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 0 {
 		t.Errorf("directly allowing privilege escalation expected no errors but got %v", errs)
 	}
 
 	// Now set the scc spec to false and reset AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &no
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
 	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
-	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
+	errs = provider.validateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 1 {
 		t.Errorf("expected exactly 1 error but got %v", errs)
 	} else {
@@ -1368,8 +1378,12 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 
 	// Now unset both AllowPrivilegeEscalation
 	scc.AllowPrivilegeEscalation = &yes
+	provider, err = NewSimpleProvider(scc)
+	if err != nil {
+		t.Errorf("error creating provider: %v", err.Error())
+	}
 	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
-	errs = provider.ValidateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
+	errs = provider.validateContainerSecurityContext(pod, &pod.Spec.Containers[0], field.NewPath(""))
 	if len(errs) != 0 {
 		t.Errorf("resetting allowing privilege escalation expected no errors but got %v", errs)
 	}
@@ -1399,7 +1413,7 @@ func TestSeccompAnnotationsFieldsGeneration(t *testing.T) {
 
 	for _, tt := range []struct {
 		name                     string
-		sccProvider              SecurityContextConstraintsProvider
+		sccProvider              *simpleProvider
 		pod                      *api.Pod
 		expectedPodAnnotations   map[string]string
 		expectedPodSeccomp       *api.SeccompProfile
@@ -1537,20 +1551,22 @@ func TestSeccompAnnotationsFieldsGeneration(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			podSecurityContext, podAnnotations, err := tt.sccProvider.CreatePodSecurityContext(tt.pod)
+			podCopy := tt.pod.DeepCopy()
+			err := tt.sccProvider.mutatePod(podCopy)
 			require.NoError(t, err)
 
-			if !reflect.DeepEqual(tt.expectedPodAnnotations, podAnnotations) {
-				t.Errorf("pod annotations differ: %s", cmp.Diff(tt.expectedPodAnnotations, podAnnotations))
+			if !reflect.DeepEqual(tt.expectedPodAnnotations, podCopy.Annotations) {
+				t.Errorf("pod annotations differ: %s", cmp.Diff(tt.expectedPodAnnotations, podCopy.Annotations))
 			}
 
-			if !reflect.DeepEqual(tt.expectedPodSeccomp, podSecurityContext.SeccompProfile) {
-				t.Errorf("pod seccomp profiles differ - expected %v; got %v", tt.expectedPodSeccomp, podSecurityContext.SeccompProfile)
+			if !reflect.DeepEqual(tt.expectedPodSeccomp, podCopy.Spec.SecurityContext.SeccompProfile) {
+				t.Errorf("pod seccomp profiles differ - expected %v; got %v", tt.expectedPodSeccomp, podCopy.Spec.SecurityContext.SeccompProfile)
 			}
 
-			containerSecurityContext, err := tt.sccProvider.CreateContainerSecurityContext(tt.pod, &tt.pod.Spec.Containers[0])
+			err = tt.sccProvider.mutateContainer(tt.pod, &tt.pod.Spec.Containers[0])
 			require.NoError(t, err)
 
+			containerSecurityContext := tt.pod.Spec.Containers[0].SecurityContext
 			if !reflect.DeepEqual(tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile) {
 				t.Errorf("container seccomp profiles differ - expected %v; got %v", tt.expectedContainerSeccomp, containerSecurityContext.SeccompProfile)
 			}

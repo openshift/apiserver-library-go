@@ -34,18 +34,18 @@ func TestMustRunAsOptions(t *testing.T) {
 	}
 }
 
-func TestMustRunAsGenerate(t *testing.T) {
+func TestMustRunAsMutateContainer(t *testing.T) {
 	var uid int64 = 1
 	opts := &securityv1.RunAsUserStrategyOptions{UID: &uid}
 	mustRunAs, err := NewMustRunAs(opts)
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewMustRunAs %v", err)
 	}
-	generated, err := mustRunAs.Generate(nil, nil)
-	if err != nil {
+	sc := mutatorForUser(nil, nil)
+	if err = mustRunAs.MutateContainer(sc); err != nil {
 		t.Fatalf("unexpected error generating uid %v", err)
 	}
-	if *generated != uid {
+	if *sc.RunAsUser() != uid {
 		t.Errorf("generated uid does not equal configured uid")
 	}
 }
@@ -59,7 +59,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Fatalf("unexpected error initializing NewMustRunAs %v", err)
 	}
 
-	errs := mustRunAs.Validate(nil, nil, nil, nil, nil)
+	errs := mustRunAs.ValidateContainer(nil, accessorForUser(nil, nil))
 	expectedMessage := "runAsUser: Required value"
 	if len(errs) == 0 {
 		t.Errorf("expected errors from nil runAsUser but got none")
@@ -67,7 +67,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = mustRunAs.Validate(nil, nil, nil, nil, &badUID)
+	errs = mustRunAs.ValidateContainer(nil, accessorForUser(nil, &badUID))
 	expectedMessage = fmt.Sprintf("runAsUser: Invalid value: %d: must be: %d", badUID, uid)
 	if len(errs) == 0 {
 		t.Errorf("expected errors from mismatch uid but got none")
@@ -75,7 +75,7 @@ func TestMustRunAsValidate(t *testing.T) {
 		t.Errorf("expected error to contain %q but it did not: %v", expectedMessage, errs)
 	}
 
-	errs = mustRunAs.Validate(nil, nil, nil, nil, &uid)
+	errs = mustRunAs.ValidateContainer(nil, accessorForUser(nil, &uid))
 	if len(errs) != 0 {
 		t.Errorf("expected no errors from matching uid but got %v", errs)
 	}

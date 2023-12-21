@@ -8,9 +8,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
+	sccapi "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/api"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/capabilities"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/group"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/seccomp"
@@ -18,7 +20,6 @@ import (
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sysctl"
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/user"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
-	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
 )
 
 // used to pass in the field being validated for reusable group strategies so they
@@ -30,143 +31,161 @@ const (
 
 // simpleProvider is the default implementation of SecurityContextConstraintsProvider
 type simpleProvider struct {
-	scc                       *securityv1.SecurityContextConstraints
-	runAsUserStrategy         user.RunAsUserSecurityContextConstraintsStrategy
-	seLinuxStrategy           selinux.SELinuxSecurityContextConstraintsStrategy
-	fsGroupStrategy           group.GroupSecurityContextConstraintsStrategy
-	supplementalGroupStrategy group.GroupSecurityContextConstraintsStrategy
-	capabilitiesStrategy      capabilities.CapabilitiesSecurityContextConstraintsStrategy
-	seccompStrategy           seccomp.SeccompStrategy
-	sysctlsStrategy           sysctl.SysctlsStrategy
+	scc             *securityv1.SecurityContextConstraints
+	seccompStrategy seccomp.SeccompStrategy
+	sysctlsStrategy sysctl.SysctlsStrategy
+
+	podValidators       []sccapi.PodSecurityValidator
+	containerValidators []sccapi.ContainerSecurityValidator
+
+	podMutators       []sccapi.PodSecurityMutator
+	containerMutators []sccapi.ContainerSecurityMutator
 }
 
 // ensure we implement the interface correctly.
 var _ SecurityContextConstraintsProvider = &simpleProvider{}
 
 // NewSimpleProvider creates a new SecurityContextConstraintsProvider instance.
-func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (SecurityContextConstraintsProvider, error) {
+func NewSimpleProvider(scc *securityv1.SecurityContextConstraints) (*simpleProvider, error) {
 	if scc == nil {
-		return nil, fmt.Errorf("NewSimpleProvider requires a SecurityContextConstraints")
+		return nil, fmt.Errorf("NewSimpleProvider requires a SecurityContextConstraint")
 	}
 
-	userStrat, err := createUserStrategy(&scc.RunAsUser)
+	var err error
+	provider := &simpleProvider{
+		scc: scc,
+		podValidators: []sccapi.PodSecurityValidator{
+			NewPodBoolChecker(getPodHostPID, "hostPID", scc.AllowHostPID, "Host PID is not allowed to be used"),
+			NewPodBoolChecker(getPodHostNetwork, "hostNetwork", scc.AllowHostNetwork, "Host network is not allowed to be used"),
+			NewPodBoolChecker(getPodHostIPC, "hostIPC", scc.AllowHostIPC, "Host IPC is not allowed to be used"),
+		},
+		containerValidators: []sccapi.ContainerSecurityValidator{
+			checkPrivileged(scc.AllowPrivilegedContainer),
+			checkAllowPrivilegeEscalation(scc.AllowPrivilegeEscalation),
+		},
+	}
+
+	readOnlyFSMutator, readOnlyFSValidator := readOnlyFileSystemAdmission(scc.ReadOnlyRootFilesystem)
+	provider.containerMutators = append(provider.containerMutators, readOnlyFSMutator)
+	provider.containerValidators = append(provider.containerValidators, readOnlyFSValidator)
+
+	runAsUserStrategy, err := user.CreateUserStrategy(&scc.RunAsUser)
 	if err != nil {
 		return nil, err
 	}
+	provider.containerMutators = append(provider.containerMutators, runAsUserStrategy)
+	provider.containerValidators = append(provider.containerValidators, runAsUserStrategy)
 
-	seLinuxStrat, err := createSELinuxStrategy(&scc.SELinuxContext)
+	seLinuxStrategy, err := selinux.CreateSELinuxStrategy(&scc.SELinuxContext)
 	if err != nil {
 		return nil, err
 	}
+	provider.podMutators = append(provider.podMutators, seLinuxStrategy)
+	provider.podValidators = append(provider.podValidators, seLinuxStrategy)
+	provider.containerMutators = append(provider.containerMutators, seLinuxStrategy)
+	provider.containerValidators = append(provider.containerValidators, seLinuxStrategy)
 
-	fsGroupStrat, err := createFSGroupStrategy(&scc.FSGroup)
+	fsGroupStrategy, err := createFSGroupStrategy(&scc.FSGroup)
 	if err != nil {
 		return nil, err
 	}
+	provider.podMutators = append(provider.podMutators, fsGroupStrategy)
+	provider.podValidators = append(provider.podValidators, fsGroupStrategy)
 
-	supGroupStrat, err := createSupplementalGroupStrategy(&scc.SupplementalGroups)
+	supplementalGroupStrategy, err := createSupplementalGroupStrategy(&scc.SupplementalGroups)
 	if err != nil {
 		return nil, err
 	}
+	provider.podMutators = append(provider.podMutators, supplementalGroupStrategy)
+	provider.podValidators = append(provider.podValidators, supplementalGroupStrategy)
 
-	capStrat, err := createCapabilitiesStrategy(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
+	capabilitiesStrategy, err := capabilities.NewDefaultCapabilities(scc.DefaultAddCapabilities, scc.RequiredDropCapabilities, scc.AllowedCapabilities)
 	if err != nil {
 		return nil, err
 	}
+	provider.containerMutators = append(provider.containerMutators, capabilitiesStrategy)
+	provider.containerValidators = append(provider.containerValidators, capabilitiesStrategy)
 
-	seccompStrat, err := createSeccompStrategy(scc.SeccompProfiles)
-	if err != nil {
-		return nil, err
+	// Seccomp strategy is special. We should get rid of the annotations ASAP.
+	provider.seccompStrategy = seccomp.NewSeccompStrategy(scc.SeccompProfiles)
+
+	// Sysctls are not available in the generic pod accessor
+	provider.sysctlsStrategy = sysctl.NewMustMatchPatterns(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
+
+	return provider, nil
+}
+
+func (s *simpleProvider) ApplyToPod(pod *api.Pod) field.ErrorList {
+	// AssignSecurityContext creates a security context for each container in the pod
+	// and validates that the sc falls within the scc constraints.  All containers must validate against
+	// the same scc or is not considered valid.
+	errs := field.ErrorList{}
+
+	fldPath := field.NewPath("spec")
+	if err := s.mutatePod(pod); err != nil {
+		errs = append(errs, field.Invalid(fldPath.Child("securityContext"), pod.Spec.SecurityContext, err.Error()))
 	}
 
-	sysctlsStrat, err := createSysctlsStrategy(sysctl.SafeSysctlAllowlist(), scc.AllowedUnsafeSysctls, scc.ForbiddenSysctls)
-	if err != nil {
-		return nil, err
+	errs = append(errs, s.validatePod(pod, fldPath)...)
+
+	podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
+		if err := s.mutateContainer(pod, container); err != nil {
+			errs = append(errs, field.Invalid(fldPath.Child("securityContext"), "", err.Error()))
+			return true // don't short-circuit, report errors from other containers, too
+		}
+		errs = append(errs, s.validateContainer(pod, container, path)...)
+		return true
+	})
+
+	if len(errs) > 0 {
+		return errs
 	}
 
-	return &simpleProvider{
-		scc:                       scc,
-		runAsUserStrategy:         userStrat,
-		seLinuxStrategy:           seLinuxStrat,
-		fsGroupStrategy:           fsGroupStrat,
-		supplementalGroupStrategy: supGroupStrat,
-		capabilitiesStrategy:      capStrat,
-		seccompStrategy:           seccompStrat,
-		sysctlsStrategy:           sysctlsStrat,
-	}, nil
+	return nil
 }
 
 // Create a PodSecurityContext based on the given constraints.  If a setting is already set
 // on the PodSecurityContext it will not be changed.  Validate should be used after the context
 // is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) CreatePodSecurityContext(pod *api.Pod) (*api.PodSecurityContext, map[string]string, error) {
-	sc := NewPodSecurityContextMutator(pod.Spec.SecurityContext)
+func (s *simpleProvider) mutatePod(pod *api.Pod) error {
+	sc := securitycontext.NewPodSecurityContextMutator(pod.Spec.SecurityContext)
 
-	annotationsCopy := copySS(pod.Annotations)
-
-	if sc.SupplementalGroups() == nil {
-		supGroups, err := s.supplementalGroupStrategy.Generate(pod)
-		if err != nil {
-			return nil, nil, err
+	for _, mutator := range s.podMutators {
+		if err := mutator.MutatePod(sc); err != nil {
+			return err
 		}
-		sc.SetSupplementalGroups(supGroups)
-	}
-
-	if sc.FSGroup() == nil {
-		fsGroup, err := s.fsGroupStrategy.GenerateSingle(pod)
-		if err != nil {
-			return nil, nil, err
-		}
-		sc.SetFSGroup(fsGroup)
-	}
-
-	if sc.SELinuxOptions() == nil {
-		seLinux, err := s.seLinuxStrategy.Generate(pod, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		sc.SetSELinuxOptions(seLinux)
 	}
 
 	// This is only generated on the pod level.  Containers inherit the pod's profile.  If the
 	// container has a specific profile set then it will be caught in the validation step.
 	seccompProfile, err := s.seccompStrategy.Generate(pod.Annotations, pod)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	if seccompProfile != "" {
-		if annotationsCopy == nil {
-			annotationsCopy = map[string]string{}
+		if pod.Annotations == nil {
+			pod.Annotations = map[string]string{}
 		}
-		annotationsCopy[api.SeccompPodAnnotationKey] = seccompProfile
+		pod.Annotations[api.SeccompPodAnnotationKey] = seccompProfile
 		sc.SetSeccompProfile(seccompFieldForAnnotation(seccompProfile))
 	}
 
-	return sc.PodSecurityContext(), annotationsCopy, nil
+	return nil
 }
 
 // Create a SecurityContext based on the given constraints.  If a setting is already set on the
 // container's security context then it will not be changed.  Validation should be used after
 // the context is created to ensure it complies with the required restrictions.
-func (s *simpleProvider) CreateContainerSecurityContext(pod *api.Pod, container *api.Container) (*api.SecurityContext, error) {
-	sc := NewEffectiveContainerSecurityContextMutator(
-		NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
-		NewContainerSecurityContextMutator(container.SecurityContext),
+func (s *simpleProvider) mutateContainer(pod *api.Pod, container *api.Container) error {
+	sc := securitycontext.NewEffectiveContainerSecurityContextMutator(
+		securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext),
+		securitycontext.NewContainerSecurityContextMutator(container.SecurityContext),
 	)
-	if sc.RunAsUser() == nil {
-		uid, err := s.runAsUserStrategy.Generate(pod, container)
-		if err != nil {
-			return nil, err
-		}
-		sc.SetRunAsUser(uid)
-	}
 
-	if sc.SELinuxOptions() == nil {
-		seLinux, err := s.seLinuxStrategy.Generate(pod, container)
-		if err != nil {
-			return nil, err
+	for _, mutator := range s.containerMutators {
+		if err := mutator.MutateContainer(sc); err != nil {
+			return err
 		}
-		sc.SetSELinuxOptions(seLinux)
 	}
 
 	// if we're using the non-root strategy set the marker that this container should not be
@@ -192,22 +211,9 @@ func (s *simpleProvider) CreateContainerSecurityContext(pod *api.Pod, container 
 		}
 	}
 
-	caps, err := s.capabilitiesStrategy.Generate(pod, container)
-	if err != nil {
-		return nil, err
-	}
-	sc.SetCapabilities(caps)
-
-	// if the SCC requires a read only root filesystem and the container has not made a specific
-	// request then default ReadOnlyRootFilesystem to true.
-	if s.scc.ReadOnlyRootFilesystem && sc.ReadOnlyRootFilesystem() == nil {
-		readOnlyRootFS := true
-		sc.SetReadOnlyRootFilesystem(&readOnlyRootFS)
-	}
-
 	isPrivileged := sc.Privileged() != nil && *sc.Privileged()
 	addCapSysAdmin := false
-	if caps != nil {
+	if caps := sc.Capabilities(); caps != nil {
 		for _, cap := range caps.Add {
 			if string(cap) == "CAP_SYS_ADMIN" {
 				addCapSysAdmin = true
@@ -250,45 +256,43 @@ func (s *simpleProvider) CreateContainerSecurityContext(pod *api.Pod, container 
 		sc.SetAllowPrivilegeEscalation(s.scc.AllowPrivilegeEscalation)
 	}
 
-	return sc.ContainerSecurityContext(), nil
+	return nil
+}
+
+func (s *simpleProvider) validatePod(pod *api.Pod, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, s.validatePodSecurityContext(pod, fldPath.Child("securityContext"))...)
+	allErrs = append(allErrs, s.validatePodVolumes(pod.Spec.Volumes, fldPath.Child("volumes"))...)
+
+	return allErrs
 }
 
 // Ensure a pod's SecurityContext is in compliance with the given constraints.
-func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field.Path) field.ErrorList {
+func (s *simpleProvider) validatePodSecurityContext(pod *api.Pod, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	sc := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
 
-	fsGroups := []int64{}
-	if fsGroup := sc.FSGroup(); fsGroup != nil {
-		fsGroups = append(fsGroups, *fsGroup)
+	scFieldPath := fldPath.Child("securityContext")
+	for _, validator := range s.podValidators {
+		allErrs = append(allErrs, validator.ValidatePod(scFieldPath, sc)...)
 	}
-	allErrs = append(allErrs, s.fsGroupStrategy.Validate(fldPath, pod, fsGroups)...)
-	allErrs = append(allErrs, s.supplementalGroupStrategy.Validate(fldPath, pod, sc.SupplementalGroups())...)
+
 	allErrs = append(allErrs, s.seccompStrategy.ValidatePod(pod)...)
-
-	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, nil, sc.SELinuxOptions())...)
-
-	if !s.scc.AllowHostNetwork && sc.HostNetwork() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), sc.HostNetwork(), "Host network is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostPID && sc.HostPID() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPID"), sc.HostPID(), "Host PID is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostIPC && sc.HostIPC() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostIPC"), sc.HostIPC(), "Host IPC is not allowed to be used"))
-	}
-
 	allErrs = append(allErrs, s.sysctlsStrategy.Validate(pod)...)
 
-	if len(pod.Spec.Volumes) > 0 && !sccutil.SCCAllowsAllVolumes(s.scc) {
+	return allErrs
+}
+
+func (s *simpleProvider) validatePodVolumes(podVolumes []api.Volume, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(podVolumes) > 0 && !sccutil.SCCAllowsAllVolumes(s.scc) {
 		allowedVolumes := sccutil.FSTypeToStringSetInternal(s.scc.Volumes)
-		for i, v := range pod.Spec.Volumes {
+		for i, v := range podVolumes {
 			fsType, err := sccutil.GetVolumeFSType(v)
 			if err != nil {
-				allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "volumes").Index(i), string(fsType), err.Error()))
+				allErrs = append(allErrs, field.Invalid(fldPath.Index(i), string(fsType), err.Error()))
 				continue
 			}
 
@@ -300,8 +304,8 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 		}
 	}
 
-	if len(pod.Spec.Volumes) > 0 && len(s.scc.AllowedFlexVolumes) > 0 && sccutil.SCCAllowsFSTypeInternal(s.scc, securityv1.FSTypeFlexVolume) {
-		for i, v := range pod.Spec.Volumes {
+	if len(podVolumes) > 0 && len(s.scc.AllowedFlexVolumes) > 0 && sccutil.SCCAllowsFSTypeInternal(s.scc, securityv1.FSTypeFlexVolume) {
+		for i, v := range podVolumes {
 			if v.FlexVolume == nil {
 				continue
 			}
@@ -316,7 +320,7 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 			}
 			if !found {
 				allErrs = append(allErrs,
-					field.Invalid(fldPath.Child("volumes").Index(i).Child("driver"), driver,
+					field.Invalid(fldPath.Index(i).Child("driver"), driver,
 						"Flexvolume driver is not allowed to be used"))
 			}
 		}
@@ -325,74 +329,27 @@ func (s *simpleProvider) ValidatePodSecurityContext(pod *api.Pod, fldPath *field
 	return allErrs
 }
 
+func (s *simpleProvider) validateContainer(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, s.validateContainerSecurityContext(pod, container, fldPath.Child("securityContext"))...)
+	allErrs = append(allErrs, checkHostPort(s.scc.AllowHostPorts, container.Ports, fldPath.Child("ports"))...)
+
+	return allErrs
+}
+
 // Ensure a container's SecurityContext is in compliance with the given constraints
-func (s *simpleProvider) ValidateContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
+func (s *simpleProvider) validateContainerSecurityContext(pod *api.Pod, container *api.Container, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	podSC := securitycontext.NewPodSecurityContextAccessor(pod.Spec.SecurityContext)
 	sc := securitycontext.NewEffectiveContainerSecurityContextAccessor(podSC, securitycontext.NewContainerSecurityContextMutator(container.SecurityContext))
 
-	allErrs = append(allErrs, s.runAsUserStrategy.Validate(fldPath, pod, container, sc.RunAsNonRoot(), sc.RunAsUser())...)
-	allErrs = append(allErrs, s.seLinuxStrategy.Validate(fldPath.Child("seLinuxOptions"), pod, container, sc.SELinuxOptions())...)
+	for _, validator := range s.containerValidators {
+		allErrs = append(allErrs, validator.ValidateContainer(fldPath, sc)...)
+	}
 	allErrs = append(allErrs, s.seccompStrategy.ValidateContainer(pod, container)...)
 
-	privileged := sc.Privileged()
-	if !s.scc.AllowPrivilegedContainer && privileged != nil && *privileged {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("privileged"), *privileged, "Privileged containers are not allowed"))
-	}
-
-	allErrs = append(allErrs, s.capabilitiesStrategy.Validate(fldPath, pod, container, sc.Capabilities())...)
-
-	if !s.scc.AllowHostNetwork && podSC.HostNetwork() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostNetwork"), podSC.HostNetwork(), "Host network is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostPorts {
-		podhelpers.VisitContainersWithPath(&pod.Spec, fldPath, func(container *api.Container, path *field.Path) bool {
-			allErrs = append(allErrs, s.hasHostPort(container, path)...)
-			return true
-		})
-	}
-
-	if !s.scc.AllowHostPID && podSC.HostPID() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPID"), podSC.HostPID(), "Host PID is not allowed to be used"))
-	}
-
-	if !s.scc.AllowHostIPC && podSC.HostIPC() {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("hostIPC"), podSC.HostIPC(), "Host IPC is not allowed to be used"))
-	}
-
-	if s.scc.ReadOnlyRootFilesystem {
-		readOnly := sc.ReadOnlyRootFilesystem()
-		if readOnly == nil {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("readOnlyRootFilesystem"), readOnly, "ReadOnlyRootFilesystem may not be nil and must be set to true"))
-		} else if !*readOnly {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("readOnlyRootFilesystem"), *readOnly, "ReadOnlyRootFilesystem must be set to true"))
-		}
-	}
-
-	allowEscalation := sc.AllowPrivilegeEscalation()
-	if s.scc.AllowPrivilegeEscalation != nil && !*s.scc.AllowPrivilegeEscalation {
-		if allowEscalation == nil {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("allowPrivilegeEscalation"), allowEscalation, "Allowing privilege escalation for containers is not allowed"))
-		}
-
-		if allowEscalation != nil && *allowEscalation {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("allowPrivilegeEscalation"), *allowEscalation, "Allowing privilege escalation for containers is not allowed"))
-		}
-	}
-
-	return allErrs
-}
-
-// hasHostPort checks the port definitions on the container for HostPort > 0.
-func (s *simpleProvider) hasHostPort(container *api.Container, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	for _, cp := range container.Ports {
-		if cp.HostPort > 0 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("hostPort"), cp.HostPort, "Host ports are not allowed to be used"))
-		}
-	}
 	return allErrs
 }
 
@@ -413,44 +370,27 @@ func (s *simpleProvider) GetSCCGroups() []string {
 	return s.scc.Groups
 }
 
-// createUserStrategy creates a new user strategy.
-func createUserStrategy(opts *securityv1.RunAsUserStrategyOptions) (user.RunAsUserSecurityContextConstraintsStrategy, error) {
-	switch opts.Type {
-	case securityv1.RunAsUserStrategyMustRunAs:
-		return user.NewMustRunAs(opts)
-	case securityv1.RunAsUserStrategyMustRunAsRange:
-		return user.NewMustRunAsRange(opts)
-	case securityv1.RunAsUserStrategyMustRunAsNonRoot:
-		return user.NewRunAsNonRoot(opts)
-	case securityv1.RunAsUserStrategyRunAsAny:
-		return user.NewRunAsAny(opts)
-	default:
-		return nil, fmt.Errorf("Unrecognized RunAsUser strategy type %s", opts.Type)
-	}
-}
-
-// createSELinuxStrategy creates a new selinux strategy.
-func createSELinuxStrategy(opts *securityv1.SELinuxContextStrategyOptions) (selinux.SELinuxSecurityContextConstraintsStrategy, error) {
-	switch opts.Type {
-	case securityv1.SELinuxStrategyMustRunAs:
-		return selinux.NewMustRunAs(opts)
-	case securityv1.SELinuxStrategyRunAsAny:
-		return selinux.NewRunAsAny(opts)
-	default:
-		return nil, fmt.Errorf("Unrecognized SELinuxContext strategy type %s", opts.Type)
-	}
-}
-
 // createFSGroupStrategy creates a new fsgroup strategy
 func createFSGroupStrategy(opts *securityv1.FSGroupStrategyOptions) (group.GroupSecurityContextConstraintsStrategy, error) {
 	switch opts.Type {
 	case securityv1.FSGroupStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.FSGroupStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, fsGroupField)
+		return group.NewMustRunAs(opts.Ranges, fsGroupField, getFSGroups, setFSGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized FSGroup strategy type %s", opts.Type)
 	}
+}
+
+func getFSGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
+	if fsGroup := podSC.FSGroup(); fsGroup != nil {
+		return []int64{*fsGroup}
+	}
+	return nil
+}
+
+func setFSGroups(podSC securitycontext.PodSecurityContextMutator, val int64) {
+	podSC.SetFSGroup(&val)
 }
 
 // createSupplementalGroupStrategy creates a new supplemental group strategy
@@ -459,25 +399,18 @@ func createSupplementalGroupStrategy(opts *securityv1.SupplementalGroupsStrategy
 	case securityv1.SupplementalGroupsStrategyRunAsAny:
 		return group.NewRunAsAny()
 	case securityv1.SupplementalGroupsStrategyMustRunAs:
-		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField)
+		return group.NewMustRunAs(opts.Ranges, supplementalGroupsField, getSupplementalGroups, SetSupplementalGroups)
 	default:
 		return nil, fmt.Errorf("Unrecognized SupplementalGroups strategy type %s", opts.Type)
 	}
 }
 
-// createCapabilitiesStrategy creates a new capabilities strategy.
-func createCapabilitiesStrategy(defaultAddCaps, requiredDropCaps, allowedCaps []corev1.Capability) (capabilities.CapabilitiesSecurityContextConstraintsStrategy, error) {
-	return capabilities.NewDefaultCapabilities(defaultAddCaps, requiredDropCaps, allowedCaps)
+func getSupplementalGroups(podSC securitycontext.PodSecurityContextAccessor) []int64 {
+	return podSC.SupplementalGroups()
 }
 
-// createSeccompStrategy creates a new seccomp strategy
-func createSeccompStrategy(allowedProfiles []string) (seccomp.SeccompStrategy, error) {
-	return seccomp.NewSeccompStrategy(allowedProfiles), nil
-}
-
-// createSysctlsStrategy creates a new sysctls strategy
-func createSysctlsStrategy(safeWhitelist, allowedUnsafeSysctls, forbiddenSysctls []string) (sysctl.SysctlsStrategy, error) {
-	return sysctl.NewMustMatchPatterns(safeWhitelist, allowedUnsafeSysctls, forbiddenSysctls), nil
+func SetSupplementalGroups(podSC securitycontext.PodSecurityContextMutator, val int64) {
+	podSC.SetSupplementalGroups([]int64{val})
 }
 
 // allowsVolumeType determines whether the type and volume are valid
@@ -527,16 +460,4 @@ func seccompFieldForAnnotation(annotation string) *api.SeccompProfile {
 	// we can only reach this code path if the localhostProfile name has a zero
 	// length or if the annotation has an unrecognized value
 	return nil
-}
-
-// CopySS makes a shallow copy of a map.
-func copySS(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	copy := make(map[string]string, len(m))
-	for k, v := range m {
-		copy[k] = v
-	}
-	return copy
 }

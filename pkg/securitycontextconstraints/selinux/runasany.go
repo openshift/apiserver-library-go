@@ -2,7 +2,7 @@ package selinux
 
 import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	coreapi "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/securitycontext"
 
 	securityv1 "github.com/openshift/api/security/v1"
 )
@@ -17,12 +17,20 @@ func NewRunAsAny(options *securityv1.SELinuxContextStrategyOptions) (SELinuxSecu
 	return &runAsAny{}, nil
 }
 
+func (s *runAsAny) MutatePod(securitycontext.PodSecurityContextMutator) error {
+	return nil
+}
+
 // Generate creates the SELinuxOptions based on constraint rules.
-func (s *runAsAny) Generate(pod *coreapi.Pod, container *coreapi.Container) (*coreapi.SELinuxOptions, error) {
-	return nil, nil
+func (s *runAsAny) MutateContainer(securitycontext.ContainerSecurityContextMutator) error {
+	return nil
 }
 
 // Validate ensures that the specified values fall within the range of the strategy.
-func (s *runAsAny) Validate(fldPath *field.Path, _ *coreapi.Pod, _ *coreapi.Container, options *coreapi.SELinuxOptions) field.ErrorList {
+func (s *runAsAny) ValidateContainer(_ *field.Path, _ securitycontext.ContainerSecurityContextAccessor) field.ErrorList {
+	return field.ErrorList{}
+}
+
+func (s *runAsAny) ValidatePod(_ *field.Path, _ securitycontext.PodSecurityContextAccessor) field.ErrorList {
 	return field.ErrorList{}
 }
