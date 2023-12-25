@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/diff"
@@ -204,7 +205,7 @@ func TestAdmitCaps(t *testing.T) {
 	}
 }
 
-func TestShouldIgnore(t *testing.T) {
+func TestShouldSkipSCCEvaluation(t *testing.T) {
 	podCreationToAttributes := func(p *coreapi.Pod) admission.Attributes {
 		return admission.NewAttributesRecord(
 			p, nil,
@@ -269,6 +270,15 @@ func TestShouldIgnore(t *testing.T) {
 			admissionAttributes: withStatusUpdate(goodPod()),
 		},
 		{
+			description:  "schedulingGates updates should be ignored",
+			shouldIgnore: true,
+			admissionAttributes: withUpdate(schedulingGatePod(), "",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.SchedulingGates = []coreapi.PodSchedulingGate{}
+					return p
+				}),
+		},
+		{
 			description:  "don't ignore normal updates",
 			shouldIgnore: false,
 			admissionAttributes: withUpdate(goodPod(), "",
@@ -305,7 +315,7 @@ func TestShouldIgnore(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
-			ignored, err := shouldIgnore(test.admissionAttributes)
+			ignored, err := shouldSkipSCCEvaluation(test.admissionAttributes)
 			if err != nil {
 				t.Errorf("expected the test to not error but it errored with %v", err)
 			}
@@ -381,6 +391,95 @@ func TestShouldIgnoreMetaChanges(t *testing.T) {
 			oldPod := &coreapi.Pod{ObjectMeta: test.oldMeta}
 			if got := shouldIgnoreMetaChanges(newPod, oldPod); got != test.want {
 				t.Errorf("got %v; want %v; newMeta: %v; oldMeta: %v", got, test.want, test.newMeta, test.oldMeta)
+			}
+		})
+	}
+}
+
+func TestShouldSkipSCCEvaluationDoesNotMutateOriginalPod(t *testing.T) {
+	tests := []struct {
+		name       string
+		setupPod   func() *coreapi.Pod
+		setupAttrs func(pod *coreapi.Pod) admission.Attributes
+	}{
+		{
+			name: "scheduling gates update should not mutate original pod",
+			setupPod: func() *coreapi.Pod {
+				return schedulingGatePod()
+			},
+			setupAttrs: func(pod *coreapi.Pod) admission.Attributes {
+				oldPod := pod.DeepCopy()
+				updatedPod := pod.DeepCopy()
+				updatedPod.Spec.SchedulingGates = []coreapi.PodSchedulingGate{}
+
+				return admission.NewAttributesRecord(
+					updatedPod, oldPod,
+					coreapi.Kind("Pod").WithVersion("version"),
+					pod.Namespace, pod.Name,
+					coreapi.Resource("pods").WithVersion("version"),
+					"",
+					admission.Update,
+					nil,
+					false,
+					&user.DefaultInfo{},
+				)
+			},
+		},
+		{
+			name: "metadata changes should not mutate original pod",
+			setupPod: func() *coreapi.Pod {
+				pod := goodPod()
+				pod.Annotations = map[string]string{
+					"k8s.ovn.org/pod-networks": "original-value",
+					"other-annotation":         "other-value",
+				}
+				return pod
+			},
+			setupAttrs: func(pod *coreapi.Pod) admission.Attributes {
+				oldPod := pod.DeepCopy()
+				updatedPod := pod.DeepCopy()
+				updatedPod.Annotations["k8s.ovn.org/pod-networks"] = "updated-value"
+
+				return admission.NewAttributesRecord(
+					updatedPod, oldPod,
+					coreapi.Kind("Pod").WithVersion("version"),
+					pod.Namespace, pod.Name,
+					coreapi.Resource("pods").WithVersion("version"),
+					"",
+					admission.Update,
+					nil,
+					false,
+					&user.DefaultInfo{},
+				)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			originalPod := test.setupPod()
+			originalPodCopy := originalPod.DeepCopy()
+			attrs := test.setupAttrs(originalPod)
+
+			// Call shouldSkipSCCEvaluation with the admission attributes
+			_, err := shouldSkipSCCEvaluation(attrs)
+			if err != nil {
+				t.Fatalf("shouldSkipSCCEvaluation returned unexpected error: %v", err)
+			}
+
+			// Verify that the original pod hasn't been mutated
+			if !apiequality.Semantic.DeepEqual(originalPod, originalPodCopy) {
+				t.Errorf("Original pod was mutated during shouldSkipSCCEvaluation call")
+				t.Errorf("Original: %+v", originalPodCopy)
+				t.Errorf("After call: %+v", originalPod)
+			}
+
+			// Also verify that the old pod in the attributes hasn't been mutated
+			oldPodFromAttrs := attrs.GetOldObject().(*coreapi.Pod)
+			if !apiequality.Semantic.DeepEqual(oldPodFromAttrs, originalPodCopy) {
+				t.Errorf("Old pod from admission attributes was mutated during shouldSkipSCCEvaluation call")
+				t.Errorf("Expected: %+v", originalPodCopy)
+				t.Errorf("Actual: %+v", oldPodFromAttrs)
 			}
 		})
 	}
@@ -2006,6 +2105,14 @@ func goodPod() *coreapi.Pod {
 			},
 		},
 	}
+}
+
+// schedulingGatePod is empty pod with scheduling gate. schedulingGates modifications
+// should be safely ignored.
+func schedulingGatePod() *coreapi.Pod {
+	p := goodPod()
+	p.Spec.SchedulingGates = []coreapi.PodSchedulingGate{{Name: "testGate"}}
+	return p
 }
 
 // windowsPod returns windows pod without any SCCs which are specific to Linux. The admission of Windows pod
