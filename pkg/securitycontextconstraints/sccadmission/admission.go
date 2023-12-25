@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sort"
 	"strings"
 	"time"
@@ -494,7 +496,7 @@ func shouldIgnore(a admission.Attributes) (bool, error) {
 	// if this is an update, see if we are only updating the ownerRef.  Garbage collection does this
 	// and we should allow it in general, since you had the power to update and the power to delete.
 	// The worst that happens is that you delete something, but you aren't controlling the privileged object itself
-	if a.GetOperation() == admission.Update && rbacregistry.IsOnlyMutatingGCFields(a.GetObject(), a.GetOldObject(), kapihelper.Semantic) {
+	if a.GetOperation() == admission.Update && IsOnlyMutatingGCFieldsOrSchedulingGates(a.GetObject(), a.GetOldObject(), kapihelper.Semantic) {
 		return true, nil
 	}
 
@@ -545,4 +547,12 @@ func logProviders(pod *coreapi.Pod, providers []sccmatching.SecurityContextConst
 	for _, err := range providerCreationErrs {
 		klog.V(2).Infof("provider creation error: %v", err)
 	}
+}
+
+func IsOnlyMutatingGCFieldsOrSchedulingGates(obj, old runtime.Object, equalities conversion.Equalities) bool {
+	pod, _ := obj.(*coreapi.Pod)
+	oldPod, _ := old.(*coreapi.Pod)
+	pod.Spec.SchedulingGates = []coreapi.PodSchedulingGate{}
+	oldPod.Spec.SchedulingGates = []coreapi.PodSchedulingGate{}
+	return rbacregistry.IsOnlyMutatingGCFields(pod, oldPod, equalities)
 }
