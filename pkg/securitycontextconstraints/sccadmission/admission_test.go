@@ -24,9 +24,10 @@ import (
 	"k8s.io/utils/pointer"
 
 	securityv1 "github.com/openshift/api/security/v1"
+	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
+
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
 	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
-	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 )
 
 // createSAForTest Build and Initializes a ServiceAccount for tests
@@ -222,7 +223,7 @@ func TestShouldIgnore(t *testing.T) {
 		updatedPod := mutate(p.DeepCopy())
 
 		return admission.NewAttributesRecord(
-			p, updatedPod,
+			updatedPod, p,
 			coreapi.Kind("Pod").WithVersion("version"),
 			p.Namespace, p.Name,
 			coreapi.Resource("pods").WithVersion("version"),
@@ -240,11 +241,13 @@ func TestShouldIgnore(t *testing.T) {
 		})
 	}
 
-	tests := []struct {
+	type testCase struct {
 		description         string
 		shouldIgnore        bool
 		admissionAttributes admission.Attributes
-	}{
+	}
+
+	tests := []testCase{
 		{
 			description:         "Windows pod should be ignored",
 			shouldIgnore:        true,
@@ -284,6 +287,22 @@ func TestShouldIgnore(t *testing.T) {
 				}),
 		},
 	}
+
+	for _, annotation := range ignoredAnnotations.List() {
+		tests = append(tests, testCase{
+			description:  fmt.Sprintf("add ignored annotation %v", annotation),
+			shouldIgnore: true,
+			admissionAttributes: withUpdate(goodPod(), "annotations",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					if p.ObjectMeta.Annotations == nil {
+						p.ObjectMeta.Annotations = map[string]string{}
+					}
+					p.ObjectMeta.Annotations[annotation] = "somevalue"
+					return p
+				}),
+		})
+	}
+
 	for _, test := range tests {
 		t.Run(test.description, func(t *testing.T) {
 			ignored, err := shouldIgnore(test.admissionAttributes)
@@ -292,6 +311,76 @@ func TestShouldIgnore(t *testing.T) {
 			}
 			if ignored != test.shouldIgnore {
 				t.Errorf("expected outcome %v but got %v", test.shouldIgnore, ignored)
+			}
+		})
+	}
+}
+
+func TestShouldIgnoreMetaChanges(t *testing.T) {
+	emptyMeta := metav1.ObjectMeta{}
+	emptyAnno := metav1.ObjectMeta{Annotations: map[string]string{}}
+	baseMeta := metav1.ObjectMeta{
+		Annotations:     map[string]string{"aaa": "aaa", "bbb": "bbb"},
+		ManagedFields:   []metav1.ManagedFieldsEntry{{Manager: "manager"}},
+		OwnerReferences: []metav1.OwnerReference{{Name: "foo"}},
+		Finalizers:      []string{"final"},
+	}
+
+	ignoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "pod-networks-here", "aaa": "aaa", "bbb": "bbb"}}
+	onlyIgnoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "pod-networks-here"}}
+	changedIgnoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "pod-networks-here-indeed", "aaa": "aaa", "bbb": "bbb"}}
+	nonIgnoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"aaa": "aaa", "bbb": "bbb", "ccc": "ccc"}}
+	changedNonIgnoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"aaa": "aaa", "bbb": "bbb", "ccc": "CCC"}}
+	ignoredAndNonIgnoredAnno := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "pod-networks-here", "aaa": "aaa", "bbb": "bbb", "ccc": "ccc"}}
+	ignoredAndNonIgnoredAnnoUpdated := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "pod-networks-here-2", "aaa": "AAA", "bbb": "BBB", "ccc": "CCC"}}
+	managedFields := metav1.ObjectMeta{ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "manager"}}}
+	ownerRef := metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{{Name: "foo"}}}
+	ownerRefFinalizer := metav1.ObjectMeta{
+		OwnerReferences: []metav1.OwnerReference{{Name: "foo"}},
+		Finalizers:      []string{"final"},
+	}
+
+	labelsMeta := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "net"}, Labels: map[string]string{"label1": "val1", "label2": "val2"}}
+	labelsMetaAdded := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "net"}, Labels: map[string]string{"label1": "val1", "label2": "val2", "label3": "val3"}}
+	labelsMetaRemoved := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "net"}, Labels: map[string]string{"label1": "val1"}}
+	labelsMetaChanged := metav1.ObjectMeta{Annotations: map[string]string{"k8s.ovn.org/pod-networks": "net"}, Labels: map[string]string{"label1": "val1", "label2": "val2-new"}}
+
+	tests := []struct {
+		description string
+		newMeta     metav1.ObjectMeta
+		oldMeta     metav1.ObjectMeta
+		want        bool
+	}{
+		{"nil new and old annotations", emptyMeta, emptyMeta, true},
+		{"empty new and old annotations", emptyAnno, emptyAnno, true},
+		{"same annotations", baseMeta, baseMeta, true},
+		{"different managedFields", emptyMeta, managedFields, true},
+		{"only ownerRef", emptyMeta, ownerRef, true},
+		{"ownerRef and finalizer", emptyMeta, ownerRefFinalizer, true},
+		{"only ignored annotations added on nil old", onlyIgnoredAnno, emptyMeta, true},
+		{"only ignored annotations added on empty old", onlyIgnoredAnno, emptyAnno, true},
+		{"only ignored annotations removed", emptyMeta, onlyIgnoredAnno, true},
+		{"ignored and other annotations added on nil old", ignoredAnno, emptyMeta, false},
+		{"ignored and other annotations added on empty old", ignoredAnno, emptyAnno, false},
+		{"ignored and other annotations removed", emptyAnno, ignoredAnno, false},
+		{"ignored annotations added", ignoredAnno, baseMeta, true},
+		{"ignored annotations changed", changedIgnoredAnno, ignoredAnno, true},
+		{"ignored annotations removed", baseMeta, ignoredAnno, true},
+		{"non-ignored annotations added", nonIgnoredAnno, baseMeta, false},
+		{"non-ignored annotations changed", changedNonIgnoredAnno, nonIgnoredAnno, false},
+		{"non-ignored annotations removed", baseMeta, nonIgnoredAnno, false},
+		{"ignored and other annotations changed", ignoredAndNonIgnoredAnnoUpdated, ignoredAndNonIgnoredAnno, false},
+		{"labels added", labelsMetaAdded, labelsMeta, false},
+		{"labels removed", labelsMetaRemoved, labelsMeta, false},
+		{"labels changed", labelsMetaChanged, labelsMeta, false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.description, func(t *testing.T) {
+			newPod := &coreapi.Pod{ObjectMeta: test.newMeta}
+			oldPod := &coreapi.Pod{ObjectMeta: test.oldMeta}
+			if got := shouldIgnoreMetaChanges(newPod, oldPod); got != test.want {
+				t.Errorf("got %v; want %v; newMeta: %v; oldMeta: %v", got, test.want, test.newMeta, test.oldMeta)
 			}
 		})
 	}
