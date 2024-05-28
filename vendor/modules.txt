@@ -91,7 +91,7 @@ github.com/munnerz/goautoneg
 # github.com/opencontainers/go-digest v1.0.0
 ## explicit; go 1.13
 github.com/opencontainers/go-digest
-# github.com/openshift/api v0.0.0-20240521185306-0314f31e7774
+# github.com/openshift/api v0.0.0-20240527133614-ba11c1587003
 ## explicit; go 1.22.0
 github.com/openshift/api/config/v1
 github.com/openshift/api/image
@@ -112,7 +112,7 @@ github.com/openshift/build-machinery-go/make/targets/golang
 github.com/openshift/build-machinery-go/make/targets/openshift
 github.com/openshift/build-machinery-go/make/targets/openshift/operator
 github.com/openshift/build-machinery-go/scripts
-# github.com/openshift/client-go v0.0.0-20240521210225-1a8f9bfc8107
+# github.com/openshift/client-go v0.0.0-20240528061634-b054aa794d87
 ## explicit; go 1.22.0
 github.com/openshift/client-go/image/applyconfigurations/image/v1
 github.com/openshift/client-go/image/applyconfigurations/internal
@@ -139,7 +139,7 @@ github.com/openshift/client-go/security/clientset/versioned/typed/security/v1
 github.com/openshift/client-go/security/informers/externalversions/internalinterfaces
 github.com/openshift/client-go/security/informers/externalversions/security/v1
 github.com/openshift/client-go/security/listers/security/v1
-# github.com/openshift/library-go v0.0.0-20240522085517-46b9cb74daa4
+# github.com/openshift/library-go v0.0.0-20240528102242-9c194599a149
 ## explicit; go 1.22.0
 github.com/openshift/library-go/pkg/apiserver/admission/admissionrestconfig
 github.com/openshift/library-go/pkg/authorization/scopemetadata
@@ -290,7 +290,7 @@ gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# k8s.io/api v0.30.0
+# k8s.io/api v0.30.1
 ## explicit; go 1.22.0
 k8s.io/api/admissionregistration/v1
 k8s.io/api/admissionregistration/v1alpha1
@@ -346,10 +346,10 @@ k8s.io/api/storage/v1
 k8s.io/api/storage/v1alpha1
 k8s.io/api/storage/v1beta1
 k8s.io/api/storagemigration/v1alpha1
-# k8s.io/apiextensions-apiserver v0.30.0
+# k8s.io/apiextensions-apiserver v0.30.1
 ## explicit; go 1.22.0
 k8s.io/apiextensions-apiserver/pkg/features
-# k8s.io/apimachinery v0.30.0
+# k8s.io/apimachinery v0.30.1
 ## explicit; go 1.22.0
 k8s.io/apimachinery/pkg/api/equality
 k8s.io/apimachinery/pkg/api/errors
@@ -401,7 +401,7 @@ k8s.io/apimachinery/pkg/version
 k8s.io/apimachinery/pkg/watch
 k8s.io/apimachinery/third_party/forked/golang/json
 k8s.io/apimachinery/third_party/forked/golang/reflect
-# k8s.io/apiserver v0.30.0
+# k8s.io/apiserver v0.30.1
 ## explicit; go 1.22.0
 k8s.io/apiserver/pkg/admission
 k8s.io/apiserver/pkg/admission/initializer
@@ -428,7 +428,7 @@ k8s.io/apiserver/pkg/quota/v1
 k8s.io/apiserver/pkg/quota/v1/generic
 k8s.io/apiserver/pkg/storage
 k8s.io/apiserver/pkg/util/feature
-# k8s.io/client-go v0.30.0
+# k8s.io/client-go v0.30.1
 ## explicit; go 1.22.0
 k8s.io/client-go/applyconfigurations/admissionregistration/v1
 k8s.io/client-go/applyconfigurations/admissionregistration/v1alpha1
@@ -729,7 +729,7 @@ k8s.io/client-go/util/connrotation
 k8s.io/client-go/util/flowcontrol
 k8s.io/client-go/util/keyutil
 k8s.io/client-go/util/workqueue
-# k8s.io/code-generator v0.30.0
+# k8s.io/code-generator v0.30.1
 ## explicit; go 1.22.0
 k8s.io/code-generator
 k8s.io/code-generator/cmd/applyconfiguration-gen
@@ -765,7 +765,7 @@ k8s.io/code-generator/cmd/register-gen/generators
 k8s.io/code-generator/pkg/namer
 k8s.io/code-generator/pkg/util
 k8s.io/code-generator/third_party/forked/golang/reflect
-# k8s.io/component-base v0.30.0
+# k8s.io/component-base v0.30.1
 ## explicit; go 1.22.0
 k8s.io/component-base/featuregate
 k8s.io/component-base/metrics
@@ -808,7 +808,7 @@ k8s.io/kube-openapi/pkg/spec3
 k8s.io/kube-openapi/pkg/util
 k8s.io/kube-openapi/pkg/util/proto
 k8s.io/kube-openapi/pkg/validation/spec
-# k8s.io/kubernetes v1.30.0
+# k8s.io/kubernetes v1.30.1
 ## explicit; go 1.22.0
 k8s.io/kubernetes/pkg/api/legacyscheme
 k8s.io/kubernetes/pkg/api/v1/pod
