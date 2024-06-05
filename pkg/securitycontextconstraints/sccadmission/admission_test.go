@@ -269,6 +269,15 @@ func TestShouldIgnore(t *testing.T) {
 			admissionAttributes: withStatusUpdate(goodPod()),
 		},
 		{
+			description:  "schedulingGates updates should be ignored",
+			shouldIgnore: true,
+			admissionAttributes: withUpdate(schedulingGatePod(), "",
+				func(p *coreapi.Pod) *coreapi.Pod {
+					p.Spec.SchedulingGates = []coreapi.PodSchedulingGate{}
+					return p
+				}),
+		},
+		{
 			description:  "don't ignore normal updates",
 			shouldIgnore: false,
 			admissionAttributes: withUpdate(goodPod(), "",
@@ -1722,6 +1731,14 @@ func goodPod() *coreapi.Pod {
 			},
 		},
 	}
+}
+
+// schedulingGatePod is empty pod with scheduling gate. schedulingGates modifications
+// should be safely ignored.
+func schedulingGatePod() *coreapi.Pod {
+	p := goodPod()
+	p.Spec.SchedulingGates = []coreapi.PodSchedulingGate{{"testGate"}}
+	return p
 }
 
 // windowsPod returns windows pod without any SCCs which are specific to Linux. The admission of Windows pod
