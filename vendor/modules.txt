@@ -91,7 +91,7 @@ github.com/munnerz/goautoneg
 # github.com/opencontainers/go-digest v1.0.0
 ## explicit; go 1.13
 github.com/opencontainers/go-digest
-# github.com/openshift/api v0.0.0-20240527133614-ba11c1587003
+# github.com/openshift/api v0.0.0-20240527133614-ba11c1587003 => github.com/haircommander/api v0.0.0-20240710164816-322e78cc272a
 ## explicit; go 1.22.0
 github.com/openshift/api/config/v1
 github.com/openshift/api/image
@@ -863,3 +863,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.3.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
+# github.com/openshift/api => github.com/haircommander/api v0.0.0-20240710164816-322e78cc272a
