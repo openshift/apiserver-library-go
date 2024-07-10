@@ -76,4 +76,7 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-replace github.com/openshift/api => github.com/haircommander/api v0.0.0-20240710164816-322e78cc272a // indirect
+replace (
+	github.com/openshift/api => github.com/haircommander/api v0.0.0-20240710164816-322e78cc272a // indirect
+	k8s.io/kubernetes => github.com/haircommander/kubernetes v0.0.0-20240710175032-cd25a02ffadd // indirect
+)
