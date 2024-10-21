@@ -50,6 +50,7 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 			SupplementalGroups: securityv1.SupplementalGroupsStrategyOptions{
 				Type: securityv1.SupplementalGroupsStrategyRunAsAny,
 			},
+			UserNamespaceLevel: securityv1.NamespaceLevelAllowHost,
 		}
 	}
 
@@ -106,6 +107,7 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 			SupplementalGroups: securityv1.SupplementalGroupsStrategyOptions{
 				Type: securityv1.SupplementalGroupsStrategyRunAsAny,
 			},
+			UserNamespaceLevel: securityv1.NamespaceLevelAllowHost,
 		}
 	}
 
@@ -215,6 +217,9 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 	failAllUnsafeSysctlsSCC := defaultSCC()
 	failAllUnsafeSysctlsSCC.AllowedUnsafeSysctls = []string{}
 
+	failUserNamespaceSCC := defaultSCC()
+	failUserNamespaceSCC.UserNamespaceLevel = securityv1.NamespaceLevelRequirePod
+
 	failSafeSysctlKernelPod := defaultPod()
 	failSafeSysctlKernelPod.Spec.SecurityContext.Sysctls = []api.Sysctl{
 		{
@@ -233,6 +238,10 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 
 	failSeccompProfilePod := defaultPod()
 	failSeccompProfilePod.Annotations = map[string]string{api.SeccompPodAnnotationKey: "foo"}
+
+	failUserNamespacePod := defaultPod()
+	trueVar := true
+	failUserNamespacePod.Spec.SecurityContext.HostUsers = &trueVar
 
 	errorCases := map[string]struct {
 		pod           *api.Pod
@@ -328,6 +337,16 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 			pod:           failSeccompProfilePod,
 			scc:           defaultSCC(),
 			expectedError: "Forbidden: seccomp may not be set",
+		},
+		"failRequireHostUser": {
+			pod:           failUserNamespacePod,
+			scc:           failUserNamespaceSCC,
+			expectedError: "spec.hostUsers: Invalid value: true: Host Users must be set to false",
+		},
+		"failUnsetRequireHostUser": {
+			pod:           defaultPod(),
+			scc:           failUserNamespaceSCC,
+			expectedError: `spec.hostUsers: Invalid value: "null": Host Users must be set to false`,
 		},
 	}
 	for k, v := range errorCases {
@@ -597,6 +616,20 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		api.SeccompPodAnnotationKey: "foo",
 	}
 
+	userNamespaceOnSCC := defaultSCC()
+	userNamespaceOnSCC.UserNamespaceLevel = securityv1.NamespaceLevelRequirePod
+
+	userNamespaceOnPod := defaultPod()
+	falseVar := false
+	userNamespaceOnPod.Spec.SecurityContext.HostUsers = &falseVar
+
+	userNamespaceOffSCC := defaultSCC()
+	userNamespaceOffSCC.UserNamespaceLevel = securityv1.NamespaceLevelAllowHost
+
+	userNamespaceOffPod := defaultPod()
+	trueVar := true
+	userNamespaceOffPod.Spec.SecurityContext.HostUsers = &trueVar
+
 	successCases := map[string]struct {
 		pod *api.Pod
 		scc *securityv1.SecurityContextConstraints
@@ -668,6 +701,14 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		"pass seccomp validating SCC": {
 			pod: seccompPod,
 			scc: seccompSCC,
+		},
+		"pass user namespace on validating SCC": {
+			pod: userNamespaceOnPod,
+			scc: userNamespaceOnSCC,
+		},
+		"pass user namespace off validating SCC": {
+			pod: userNamespaceOffPod,
+			scc: userNamespaceOffSCC,
 		},
 	}
 
