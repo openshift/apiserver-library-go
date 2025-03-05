@@ -3,6 +3,7 @@ package sccmatching
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -92,19 +93,20 @@ func authorizedForSCC(ctx context.Context, sccName string, info user.Info, names
 // if it is usable by the userInfo.
 // Anything we do here needs to work with a deny authorizer so the choices are limited to SAR / Authorizer
 func ConstraintAppliesTo(ctx context.Context, sccName string, sccUsers, sccGroups []string, userInfo user.Info, namespace string, a authorizer.Authorizer) bool {
-	for _, user := range sccUsers {
-		if userInfo.GetName() == user {
-			return true
-		}
+	if slices.Contains(sccUsers, userInfo.GetName()) {
+		return true
 	}
+
 	for _, userGroup := range userInfo.GetGroups() {
-		if constraintSupportsGroup(userGroup, sccGroups) {
+		if slices.Contains(sccGroups, userGroup) {
 			return true
 		}
 	}
+
 	if a != nil {
 		return authorizedForSCC(ctx, sccName, userInfo, namespace, a)
 	}
+
 	return false
 }
 
@@ -150,16 +152,6 @@ func assignContainerSecurityContext(provider SecurityContextConstraintsProvider,
 	}
 
 	return nil
-}
-
-// constraintSupportsGroup checks that group is in constraintGroups.
-func constraintSupportsGroup(group string, constraintGroups []string) bool {
-	for _, g := range constraintGroups {
-		if g == group {
-			return true
-		}
-	}
-	return false
 }
 
 // CreateProvidersFromConstraints creates providers from the constraints supplied, including
