@@ -18,6 +18,7 @@ import (
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/admission/initializer"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/client-go/informers"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -182,8 +183,10 @@ func (c *constraint) computeSecurityContext(
 		allowedPod       *coreapi.Pod
 		allowingProvider sccmatching.SecurityContextConstraintsProvider
 		validationErrs   field.ErrorList
+		sccChecker       = newSCCAuthorizationChecker(c.authorizer, a, pod.Spec.ServiceAccountName)
 	)
 
+	// loop state variables
 	var (
 		restrictedSCCProvider   sccmatching.SecurityContextConstraintsProvider
 		restrictedV2SCCProvider sccmatching.SecurityContextConstraintsProvider
@@ -202,7 +205,7 @@ loop:
 			restrictedV2SCCProvider = providers[i]
 		}
 
-		if !allowedForUserOrSA(ctx, c.authorizer, a, provider, pod) {
+		if !sccChecker.allowedForUserOrSA(ctx, provider) {
 			denied = append(denied, provider.GetSCCName())
 			// this will cause every security context constraint attempted, in order, to the failure
 			validationErrs = append(validationErrs,
@@ -281,7 +284,7 @@ loop:
 		// find next provider that was not chosen
 		var nextNotChosenProvider sccmatching.SecurityContextConstraintsProvider
 		for _, provider := range providers[i+1:] {
-			if !allowedForUserOrSA(ctx, c.authorizer, a, provider, pod) {
+			if !sccChecker.allowedForUserOrSA(ctx, provider) {
 				continue
 			}
 			if _, errs := appliesToPod(provider, pod); len(errs) == 0 {
@@ -468,29 +471,66 @@ func (c *constraint) ValidateInitialization() error {
 	return nil
 }
 
-func allowedForUserOrSA(
-	ctx context.Context,
-	authz authorizer.Authorizer, // c.authorizer, is an interface, won't change
-	a admission.Attributes, // argument, shouln't change
-	provider sccmatching.SecurityContextConstraintsProvider, // ???
-	pod *coreapi.Pod, // change on copy
-) bool {
-	sccName := provider.GetSCCName()
-	sccUsers := provider.GetSCCUsers()
-	sccGroups := provider.GetSCCGroups()
+type sccAuthorizationChecker struct {
+	authz              authorizer.Authorizer
+	userInfo           user.Info
+	namespace          string
+	serviceAccountName string
+}
 
-	if sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, a.GetUserInfo(), a.GetNamespace(), authz) {
-		return true
+func newSCCAuthorizationChecker(authz authorizer.Authorizer, attr admission.Attributes, serviceAccountName string) *sccAuthorizationChecker {
+	return &sccAuthorizationChecker{
+		authz:              authz,
+		userInfo:           attr.GetUserInfo(),
+		namespace:          attr.GetNamespace(),
+		serviceAccountName: serviceAccountName,
 	}
+}
 
-	if len(pod.Spec.ServiceAccountName) == 0 {
+func (c *sccAuthorizationChecker) allowedForUser(ctx context.Context, provider sccmatching.SecurityContextConstraintsProvider) bool {
+	var (
+		sccName   = provider.GetSCCName()
+		sccUsers  = provider.GetSCCUsers()
+		sccGroups = provider.GetSCCGroups()
+	)
+
+	return sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, c.userInfo, c.namespace, c.authz)
+}
+
+func (c *sccAuthorizationChecker) allowedForServiceAccount(ctx context.Context, provider sccmatching.SecurityContextConstraintsProvider) bool {
+	if len(c.serviceAccountName) == 0 {
 		return false
 	}
 
-	saUserInfo := serviceaccount.UserInfo(a.GetNamespace(), pod.Spec.ServiceAccountName, "")
-	allowedForSA := sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, saUserInfo, a.GetNamespace(), authz)
+	var (
+		sccName    = provider.GetSCCName()
+		sccUsers   = provider.GetSCCUsers()
+		sccGroups  = provider.GetSCCGroups()
+		saUserInfo = serviceaccount.UserInfo(c.namespace, c.serviceAccountName, "")
+	)
 
-	return allowedForSA
+	return sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, saUserInfo, c.namespace, c.authz)
+}
+
+func (c *sccAuthorizationChecker) allowedFor(ctx context.Context, provider sccmatching.SecurityContextConstraintsProvider) string {
+	const (
+		serviceAccount = "serviceaccount"
+		user           = "user"
+	)
+
+	if c.allowedForServiceAccount(ctx, provider) {
+		return serviceAccount
+	}
+
+	if c.allowedForUser(ctx, provider) {
+		return user
+	}
+
+	return ""
+}
+
+func (c *sccAuthorizationChecker) allowedForUserOrSA(ctx context.Context, provider sccmatching.SecurityContextConstraintsProvider) bool {
+	return c.allowedForUser(ctx, provider) || c.allowedForServiceAccount(ctx, provider)
 }
 
 func (c *constraint) waitForReadyState(ctx context.Context) error {
