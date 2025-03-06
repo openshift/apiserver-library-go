@@ -153,49 +153,6 @@ func (c *constraint) Validate(ctx context.Context, a admission.Attributes, _ adm
 	return admission.NewForbidden(a, fmt.Errorf("unable to validate against any security context constraint: %v", validationErrs))
 }
 
-// these are the SCCs created by the cluster-kube-apiserver-operator.
-// see the list in https://github.com/openshift/cluster-kube-apiserver-operator/blob/3b0218cf9778cbcf2650ad5aa4e01d7b40a2d05e/bindata/bootkube/scc-manifests/0000_20_kube-apiserver-operator_00_scc-restricted.yaml
-// if these are not present, the lister isn't really finished listing.
-var standardSCCNames = sets.NewString(
-	"anyuid",
-	"hostaccess",
-	"hostmount-anyuid",
-	"hostnetwork",
-	"hostnetwork-v2",
-	"nonroot",
-	"nonroot-v2",
-	"privileged",
-	"restricted",
-	"restricted-v2",
-)
-
-func requireStandardSCCs(sccs []*securityv1.SecurityContextConstraints, err error) error {
-	if err != nil {
-		return err
-	}
-
-	allCurrentSCCNames := sets.NewString()
-	for _, curr := range sccs {
-		allCurrentSCCNames.Insert(curr.Name)
-	}
-
-	missingSCCs := standardSCCNames.Difference(allCurrentSCCNames)
-	if len(missingSCCs) == 0 {
-		return nil
-	}
-
-	return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is missing %v", strings.Join(missingSCCs.List(), ", "))
-}
-
-func (c *constraint) areListersSynced() bool {
-	for _, syncFunc := range c.listersSynced {
-		if !syncFunc() {
-			return false
-		}
-	}
-	return true
-}
-
 func (c *constraint) computeSecurityContext(
 	ctx context.Context,
 	a admission.Attributes,
@@ -537,9 +494,13 @@ func allowedForUserOrSA(
 }
 
 func (c *constraint) waitForReadyState(ctx context.Context) error {
-	err := wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(context.Context) (bool, error) {
-		return c.areListersSynced(), nil
-	})
+	const (
+		interval  = 1 * time.Second
+		timeout   = 10 * time.Second
+		immediate = true
+	)
+
+	err := wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, c.areListersSynced)
 	if err != nil {
 		return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is not synchronized")
 	}
@@ -549,20 +510,65 @@ func (c *constraint) waitForReadyState(ctx context.Context) error {
 	// If the SCCs were all deleted, then no pod will pass SCC admission until the SCCs are recreated, but the kas-o (which recreates them)
 	// bypasses SCC admission, so this does not create a cycle.
 	var requiredSCCErr error
-	err = wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(context.Context) (bool, error) {
 		if requiredSCCErr = requireStandardSCCs(c.sccLister.List(labels.Everything())); requiredSCCErr != nil {
 			return false, nil
 		}
 		return true, nil
 	})
-	if err != nil {
-		if requiredSCCErr != nil {
-			return requiredSCCErr
-		}
-		return fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly")
+	if err == nil {
+		return nil
+	}
+	if requiredSCCErr != nil {
+		return requiredSCCErr
 	}
 
-	return nil
+	// This is a wait.Interruped(err). This should be impossible, as a timeout can only happen
+	// when requiredSCCErr is set.
+	return fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly")
+}
+
+func (c *constraint) areListersSynced(_ context.Context) (bool, error) {
+	for _, syncFunc := range c.listersSynced {
+		if !syncFunc() {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// these are the SCCs created by the cluster-kube-apiserver-operator.
+// see the list in https://github.com/openshift/cluster-kube-apiserver-operator/blob/3b0218cf9778cbcf2650ad5aa4e01d7b40a2d05e/bindata/bootkube/scc-manifests/0000_20_kube-apiserver-operator_00_scc-restricted.yaml
+// if these are not present, the lister isn't really finished listing.
+var standardSCCNames = sets.NewString(
+	"anyuid",
+	"hostaccess",
+	"hostmount-anyuid",
+	"hostnetwork",
+	"hostnetwork-v2",
+	"nonroot",
+	"nonroot-v2",
+	"privileged",
+	"restricted",
+	"restricted-v2",
+)
+
+func requireStandardSCCs(sccs []*securityv1.SecurityContextConstraints, err error) error {
+	if err != nil {
+		return err
+	}
+
+	allCurrentSCCNames := sets.NewString()
+	for _, curr := range sccs {
+		allCurrentSCCNames.Insert(curr.Name)
+	}
+
+	missingSCCs := standardSCCNames.Difference(allCurrentSCCNames)
+	if len(missingSCCs) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is missing %v", strings.Join(missingSCCs.List(), ", "))
 }
 
 func (c *constraint) listOrderedSCCs(

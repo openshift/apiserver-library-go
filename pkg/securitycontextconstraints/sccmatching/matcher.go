@@ -168,7 +168,7 @@ func CreateProvidersFromConstraints(ctx context.Context, namespaceName string, s
 
 	// because we're willing to wait for 10s on a single request, we only use the namespace lister, not a live lookup.
 	var lastErr error
-	err := wait.PollImmediateWithContext(ctx, 1*time.Second, 10*time.Second, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(ctx context.Context) (bool, error) {
 		namespace, lastErr = namespaceLister.Get(namespaceName)
 		if lastErr != nil {
 			return false, nil
