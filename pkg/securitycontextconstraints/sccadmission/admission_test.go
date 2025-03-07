@@ -521,6 +521,15 @@ func TestAdmitSuccess(t *testing.T) {
 			if !reflect.DeepEqual(v.expectedContainerSC, containers[0].SecurityContext) {
 				t.Errorf("%s unexpected container SecurityContext diff:\n%s", k, diff.ObjectGoPrintSideBySide(v.expectedContainerSC, containers[0].SecurityContext))
 			}
+
+			// Also verify that the subject type annotation is set correctly
+			subjectType, ok := v.pod.Annotations["security.openshift.io/validated-scc-subject-type"]
+			if !ok {
+				t.Errorf("%s expected to find the validated-scc-subject-type annotation but found none", k)
+			} else if subjectType != "serviceaccount" {
+				// In the TestAdmitSuccess test, we're using a serviceaccount-based authorization
+				t.Errorf("%s expected subject type to be 'serviceaccount' but got %s", k, subjectType)
+			}
 		}
 	}
 }
@@ -1528,7 +1537,108 @@ func TestRestrictedMessage(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestAdmitValidatedSCCSubjectType(t *testing.T) {
+	// Create SCCs
+	userSCC := laxSCC()
+	userSCC.Name = "user-scc"
+	userSCC.Users = []string{"test-user"}
+	userSCC.Groups = []string{}
+
+	saSCC := laxSCC()
+	saSCC.Name = "sa-scc"
+	saSCC.Users = []string{}
+	saSCC.Groups = []string{}
+
+	// Setup lister for admission controller
+	nsLister := createNamespaceLister(t, createNamespaceForTest())
+	sccLister := createSCCLister(t, []*securityv1.SecurityContextConstraints{
+		userSCC,
+		saSCC,
+	})
+
+	tests := map[string]struct {
+		pod             *coreapi.Pod
+		userInfo        user.Info
+		authorizer      *sccTestAuthorizer
+		expectedSCC     string
+		expectedSubject string
+	}{
+		"user authorization": {
+			pod: goodPod(),
+			userInfo: &user.DefaultInfo{
+				Name: "test-user",
+			},
+			authorizer: &sccTestAuthorizer{
+				t:    t,
+				user: "test-user",
+				scc:  "user-scc",
+			},
+			expectedSCC:     "user-scc",
+			expectedSubject: "user",
+		},
+		"serviceaccount authorization": {
+			pod: goodPod(),
+			userInfo: &user.DefaultInfo{
+				Name: "not-in-scc",
+			},
+			authorizer: &sccTestAuthorizer{
+				t:         t,
+				user:      "system:serviceaccount:default:default",
+				namespace: "default",
+				scc:       "sa-scc",
+			},
+			expectedSCC:     "sa-scc",
+			expectedSubject: "serviceaccount",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Create the admission controller
+			c := newTestAdmission(sccLister, nsLister, test.authorizer)
+
+			// Create the attributes for the admission request to create a Pod
+			createPodAttrs := admission.NewAttributesRecord(
+				test.pod, nil,
+				coreapi.Kind("Pod").WithVersion("version"),
+				test.pod.Namespace, test.pod.Name,
+				coreapi.Resource("pods").WithVersion("version"), "",
+				admission.Create, nil,
+				false,
+				test.userInfo,
+			)
+
+			// admission.MutationInterface -> mutating admission plugin
+			err := c.(admission.MutationInterface).Admit(context.TODO(), createPodAttrs, nil)
+			if err != nil {
+				t.Errorf("Expected no admission errors but received: %v", err)
+				return
+			}
+
+			// Verify the validated annotation is set correctly
+			validatedSCC, ok := test.pod.Annotations[securityv1.ValidatedSCCAnnotation]
+			if !ok {
+				t.Errorf("Expected to find the validated SCC annotation but found none")
+				return
+			}
+			if validatedSCC != test.expectedSCC {
+				t.Errorf("Expected validatedSCC to be %s but got %s", test.expectedSCC, validatedSCC)
+				return
+			}
+
+			// Verify the new subject type annotation exists and has the correct value
+			subjectType, ok := test.pod.Annotations["security.openshift.io/validated-scc-subject-type"]
+			if !ok {
+				t.Errorf("Expected to find the validated-scc-subject-type annotation but found none")
+				return
+			}
+			if subjectType != test.expectedSubject {
+				t.Errorf("Expected subject type to be %s but got %s", test.expectedSubject, subjectType)
+			}
+		})
+	}
 }
 
 // testSCCAdmission is a helper to admit the pod and ensure it was validated against the expected
