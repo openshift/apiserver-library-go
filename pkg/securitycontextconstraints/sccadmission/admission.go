@@ -17,8 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/admission/initializer"
-	"k8s.io/apiserver/pkg/authentication/serviceaccount"
-	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/client-go/informers"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -103,7 +101,7 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 	specMutationAllowed := a.GetOperation() == admission.Create
 	ephemeralContainersMutationAllowed := specMutationAllowed || (a.GetOperation() == admission.Update && a.GetSubresource() == "ephemeralcontainers")
 
-	allowedPod, sccName, validationErrs, err := c.computeSecurityContext(ctx, a, pod, specMutationAllowed, ephemeralContainersMutationAllowed, pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation], "")
+	allowedPod, sccAnnotations, validationErrs, err := c.computeSecurityContext(ctx, a, pod, specMutationAllowed, ephemeralContainersMutationAllowed, pod.ObjectMeta.Annotations[securityv1.RequiredSCCAnnotation], "")
 	if err != nil {
 		return admission.NewForbidden(a, err)
 	}
@@ -111,11 +109,19 @@ func (c *constraint) Admit(ctx context.Context, a admission.Attributes, _ admiss
 	if allowedPod != nil {
 		*pod = *allowedPod
 		// annotate and accept the pod
-		klog.V(4).Infof("pod %s (generate: %s) validated against provider %s", pod.Name, pod.GenerateName, sccName)
+		klog.V(4).Infof(
+			"pod %s (generate: %s) validated against provider %s",
+			pod.Name, pod.GenerateName, sccAnnotations[securityv1.ValidatedSCCAnnotation],
+		)
+
 		if pod.ObjectMeta.Annotations == nil {
 			pod.ObjectMeta.Annotations = map[string]string{}
 		}
-		pod.ObjectMeta.Annotations[securityv1.ValidatedSCCAnnotation] = sccName
+
+		for key, value := range sccAnnotations {
+			pod.ObjectMeta.Annotations[key] = value
+		}
+
 		return nil
 	}
 
@@ -203,7 +209,7 @@ func (c *constraint) computeSecurityContext(
 	pod *coreapi.Pod,
 	specMutationAllowed, ephemeralContainersMutationAllowed bool,
 	requiredSCCName, validatedSCCHint string,
-) (*coreapi.Pod, string, field.ErrorList, error) {
+) (*coreapi.Pod, map[string]string, field.ErrorList, error) {
 	// get all constraints that are usable by the user
 	klog.V(4).Infof("getting security context constraints for pod %s (generate: %s) in namespace %s with user info %v", pod.Name, pod.GenerateName, a.GetNamespace(), a.GetUserInfo())
 
@@ -211,7 +217,7 @@ func (c *constraint) computeSecurityContext(
 		return c.areListersSynced(), nil
 	})
 	if err != nil {
-		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io cache is not synchronized"))
+		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io cache is not synchronized"))
 	}
 
 	// wait a few seconds until the synchronized list returns all the required SCCs created by the kas-o.
@@ -227,27 +233,27 @@ func (c *constraint) computeSecurityContext(
 	})
 	if err != nil {
 		if requiredSCCErr != nil {
-			return nil, "", nil, admission.NewForbidden(a, requiredSCCErr)
+			return nil, nil, nil, admission.NewForbidden(a, requiredSCCErr)
 		}
-		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly"))
+		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly"))
 	}
 
 	var constraints []*securityv1.SecurityContextConstraints
 	if len(requiredSCCName) > 0 {
 		requiredSCC, err := c.sccLister.Get(requiredSCCName)
 		if err != nil {
-			return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("failed to retrieve the required SCC %q: %w", requiredSCCName, err))
+			return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("failed to retrieve the required SCC %q: %w", requiredSCCName, err))
 		}
 		constraints = []*securityv1.SecurityContextConstraints{requiredSCC}
 	} else {
 		constraints, err = c.sccLister.List(labels.Everything())
 		if err != nil {
-			return nil, "", nil, admission.NewForbidden(a, err)
+			return nil, nil, nil, admission.NewForbidden(a, err)
 		}
 	}
 
 	if len(constraints) == 0 {
-		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
+		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
 	}
 	sort.Sort(sccsort.ByPriority(constraints))
 
@@ -270,33 +276,22 @@ func (c *constraint) computeSecurityContext(
 	providers, errs := sccmatching.CreateProvidersFromConstraints(ctx, a.GetNamespace(), constraints, c.namespaceLister)
 	logProviders(pod, providers, errs)
 	if len(errs) > 0 {
-		return nil, "", nil, kutilerrors.NewAggregate(errs)
+		return nil, nil, nil, kutilerrors.NewAggregate(errs)
 	}
 
 	if len(providers) == 0 {
-		return nil, "", nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraintsProvider available to validate pod request"))
+		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraintsProvider available to validate pod request"))
 	}
 
 	// all containers in a single pod must validate under a single provider or we will reject the request
 	var (
 		allowedPod       *coreapi.Pod
 		allowingProvider sccmatching.SecurityContextConstraintsProvider
+		allowedForType   string
 		validationErrs   field.ErrorList
-		saUserInfo       user.Info
 	)
 
-	userInfo := a.GetUserInfo()
-	if len(pod.Spec.ServiceAccountName) > 0 {
-		saUserInfo = serviceaccount.UserInfo(a.GetNamespace(), pod.Spec.ServiceAccountName, "")
-	}
-
-	allowedForUserOrSA := func(provider sccmatching.SecurityContextConstraintsProvider) bool {
-		sccName := provider.GetSCCName()
-		sccUsers := provider.GetSCCUsers()
-		sccGroups := provider.GetSCCGroups()
-		return sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, userInfo, a.GetNamespace(), c.authorizer) ||
-			(saUserInfo != nil && sccmatching.ConstraintAppliesTo(ctx, sccName, sccUsers, sccGroups, saUserInfo, a.GetNamespace(), c.authorizer))
-	}
+	sccChecker := newSCCAuthorizerChecker(c.authorizer, a, pod.Spec.ServiceAccountName)
 
 	appliesToPod := func(provider sccmatching.SecurityContextConstraintsProvider, pod *coreapi.Pod) (podCopy *coreapi.Pod, errs field.ErrorList) {
 		podCopy = pod.DeepCopy()
@@ -323,7 +318,8 @@ loop:
 			restrictedV2SCCProvider = providers[i]
 		}
 
-		if !allowedForUserOrSA(provider) {
+		currentType := sccChecker.allowedForType(ctx, provider)
+		if currentType == allowedForNone {
 			denied = append(denied, provider.GetSCCName())
 			// this will cause every security context constraint attempted, in order, to the failure
 			validationErrs = append(validationErrs,
@@ -351,6 +347,7 @@ loop:
 			// even on creating. We prefer most restrictive SCC in this case even if it mutates a pod.
 			allowedPod = podCopy
 			allowingProvider = provider
+			allowedForType = currentType
 			klog.V(5).Infof("pod %s (generate: %s) validated against provider %s with mutation", pod.Name, pod.GenerateName, provider.GetSCCName())
 			break loop
 		case ephemeralContainersMutationAllowed:
@@ -360,6 +357,7 @@ loop:
 			if apiequality.Semantic.DeepEqual(pod, podCopyCopy) {
 				allowedPod = podCopy
 				allowingProvider = provider
+				allowedForType = currentType
 				klog.V(5).Infof("pod %s (generate: %s) validated against provider %s with ephemeralContainers mutation", pod.Name, pod.GenerateName, provider.GetSCCName())
 				break loop
 			}
@@ -369,6 +367,7 @@ loop:
 			// if we don't allow mutation, only use the validated pod if it didn't require any spec changes
 			allowedPod = podCopy
 			allowingProvider = provider
+			allowedForType = currentType
 			klog.V(5).Infof("pod %s (generate: %s) validated against provider %s without mutation", pod.Name, pod.GenerateName, provider.GetSCCName())
 			break loop
 		default:
@@ -402,7 +401,7 @@ loop:
 		// find next provider that was not chosen
 		var nextNotChosenProvider sccmatching.SecurityContextConstraintsProvider
 		for _, provider := range providers[i+1:] {
-			if !allowedForUserOrSA(provider) {
+			if sccChecker.allowedForType(ctx, provider) == allowedForNone {
 				continue
 			}
 			if _, errs := appliesToPod(provider, pod); len(errs) == 0 {
@@ -450,7 +449,7 @@ loop:
 	}
 
 	if allowedPod == nil || allowingProvider == nil {
-		return nil, "", validationErrs, nil
+		return nil, nil, validationErrs, nil
 	}
 
 	if !specMutationAllowed {
@@ -458,7 +457,12 @@ loop:
 		a.AddAnnotation("securitycontextconstraints.admission.openshift.io/chosen", allowingProvider.GetSCCName())
 	}
 
-	return allowedPod, allowingProvider.GetSCCName(), validationErrs, nil
+	podAnnotations := map[string]string{
+		securityv1.ValidatedSCCAnnotation:                  allowingProvider.GetSCCName(),
+		"security.openshift.io/validated-scc-subject-type": allowedForType,
+	}
+
+	return allowedPod, podAnnotations, validationErrs, nil
 }
 
 var ignoredSubresources = sets.NewString(
