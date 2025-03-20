@@ -21,7 +21,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
 	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	securityv1 "github.com/openshift/api/security/v1"
 	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
@@ -201,7 +201,6 @@ func TestAdmitCaps(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestShouldIgnore(t *testing.T) {
@@ -1077,10 +1076,14 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCTwo.Priority = &matchingPriorityAndScorePriority
 
 	// we will expect these to sort as:
-	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
-		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo"}
-	sccsToSort := []*securityv1.SecurityContextConstraints{matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
-		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups}
+	expectedSort := []string{
+		"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
+		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo",
+	}
+	sccsToSort := []*securityv1.SecurityContextConstraints{
+		matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
+		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups,
+	}
 
 	sort.Sort(sccsort.ByPriority(sccsToSort))
 
@@ -1131,7 +1134,6 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
 	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCOneNoAllowedGroups.Name
 	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "provider \"matchingPrioritySCCOneNoAllowedGroups\": Forbidden: not usable by user or serviceaccount", t)
-
 }
 
 func TestAdmitSeccomp(t *testing.T) {
@@ -1242,11 +1244,9 @@ func TestAdmitSeccomp(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
-
 	mutatingSCC := restrictiveSCC()
 	mutatingSCC.Name = "mutating-scc"
 
@@ -1424,7 +1424,6 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 				validatedSCC, ok := testCase.newPod.Annotations[securityv1.ValidatedSCCAnnotation]
 				if !ok {
 					t.Errorf("expected %q to find the validated annotation on the pod for the scc but found none", testCaseName)
-
 				} else if validatedSCC != testCase.expectedSCC {
 					t.Errorf("%q should have validated against %q but found %q", testCaseName, testCase.expectedSCC, validatedSCC)
 				}
@@ -1435,7 +1434,6 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func TestRestrictedMessage(t *testing.T) {
@@ -1449,7 +1447,7 @@ func TestRestrictedMessage(t *testing.T) {
 
 	// restrictedv2 must not match, but we do have permission to use it
 	restrictv2 := restrictiveSCC()
-	restrictv2.AllowPrivilegeEscalation = pointer.Bool(false)
+	restrictv2.AllowPrivilegeEscalation = ptr.To(false)
 	restrictv2.Name = "restricted-v2"
 
 	restrictedv2Pod := goodPod()
@@ -1459,12 +1457,12 @@ func TestRestrictedMessage(t *testing.T) {
 	simplePod := goodPod()
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
-	simplePod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(true)
+	simplePod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
 
 	privilegedPod := goodPod()
 	privilegedPod.Spec.Containers[0].Name = "simple-pod"
 	privilegedPod.Spec.Containers[0].Image = "test-image:0.1"
-	privilegedPod.Spec.Containers[0].SecurityContext.Privileged = pointer.Bool(true)
+	privilegedPod.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
 
 	tryRestrictedMessage := "fails to validate against the `restricted-v2` security context constraint, but would validate successfully against the `restricted`"
 
@@ -1520,7 +1518,7 @@ func TestRestrictedMessage(t *testing.T) {
 			err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
 
 			if len(testCase.expectedMessage) == 0 && err != nil {
-				t.Fatalf(err.Error())
+				t.Fatal(err.Error())
 			}
 			if len(testCase.expectedMessage) == 0 && err == nil {
 				return // we pass
@@ -1950,6 +1948,7 @@ func createNamespaceListerAndIndexer(t *testing.T, namespaces ...*corev1.Namespa
 	}
 	return lister, indexer
 }
+
 func createNamespaceLister(t *testing.T, namespaces ...*corev1.Namespace) corev1listers.NamespaceLister {
 	t.Helper()
 
