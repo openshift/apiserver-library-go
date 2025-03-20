@@ -194,15 +194,6 @@ func requireStandardSCCs(sccs []*securityv1.SecurityContextConstraints, err erro
 	return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is missing %v", strings.Join(missingSCCs.List(), ", "))
 }
 
-func (c *constraint) areListersSynced() bool {
-	for _, syncFunc := range c.listersSynced {
-		if !syncFunc() {
-			return false
-		}
-	}
-	return true
-}
-
 func (c *constraint) computeSecurityContext(
 	ctx context.Context,
 	a admission.Attributes,
@@ -213,33 +204,8 @@ func (c *constraint) computeSecurityContext(
 	// get all constraints that are usable by the user
 	klog.V(4).Infof("getting security context constraints for pod %s (generate: %s) in namespace %s with user info %v", pod.Name, pod.GenerateName, a.GetNamespace(), a.GetUserInfo())
 
-	immediate := true
-	interval := 1 * time.Second
-	timeout := 10 * time.Second
-
-	err := wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(context.Context) (bool, error) {
-		return c.areListersSynced(), nil
-	})
-	if err != nil {
-		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io cache is not synchronized"))
-	}
-
-	// wait a few seconds until the synchronized list returns all the required SCCs created by the kas-o.
-	// If this doesn't happen, then indicate which ones are missing.  This seems odd, but our CI system suggests that this happens occasionally.
-	// If the SCCs were all deleted, then no pod will pass SCC admission until the SCCs are recreated, but the kas-o (which recreates them)
-	// bypasses SCC admission, so this does not create a cycle.
-	var requiredSCCErr error
-	err = wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(context.Context) (bool, error) {
-		if requiredSCCErr = requireStandardSCCs(c.sccLister.List(labels.Everything())); requiredSCCErr != nil {
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		if requiredSCCErr != nil {
-			return nil, nil, nil, admission.NewForbidden(a, requiredSCCErr)
-		}
-		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly"))
+	if err := c.waitForReadyState(ctx); err != nil {
+		return nil, nil, nil, admission.NewForbidden(a, err)
 	}
 
 	constraints, err := c.listSortedSCCs(requiredSCCName, validatedSCCHint, specMutationAllowed)
@@ -612,6 +578,49 @@ func (c *constraint) listSortedSCCs(
 	})
 
 	return constraints, nil
+}
+
+// waitForReadyState ensures the admission controller has a complete and
+// consistent view of SCCs before making admission decisions. It first waits for
+// the internal cache to sync, then verifies all standard SCCs are present.
+func (c *constraint) waitForReadyState(ctx context.Context) error {
+	const (
+		interval  = 1 * time.Second
+		timeout   = 10 * time.Second
+		immediate = true
+	)
+
+	err := wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(ctx context.Context) (bool, error) {
+		for _, syncFunc := range c.listersSynced {
+			if !syncFunc() {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("securitycontextconstraints.security.openshift.io cache is not synchronized")
+	}
+
+	// wait a few seconds until the synchronized list returns all the required SCCs created by the kas-o.
+	// If this doesn't happen, then indicate which ones are missing.  This seems odd, but our CI system suggests that this happens occasionally.
+	// If the SCCs were all deleted, then no pod will pass SCC admission until the SCCs are recreated, but the kas-o (which recreates them)
+	// bypasses SCC admission, so this does not create a cycle.
+	var requiredSCCErr error
+	err = wait.PollUntilContextTimeout(ctx, interval, timeout, immediate, func(context.Context) (bool, error) {
+		if requiredSCCErr = requireStandardSCCs(c.sccLister.List(labels.Everything())); requiredSCCErr != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		if requiredSCCErr != nil {
+			return requiredSCCErr
+		}
+		return fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly")
+	}
+
+	return nil
 }
 
 // logProviders logs what providers were found for the pod as well as any errors that were encountered
