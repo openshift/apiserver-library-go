@@ -242,40 +242,10 @@ func (c *constraint) computeSecurityContext(
 		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("securitycontextconstraints.security.openshift.io required check failed oddly"))
 	}
 
-	var constraints []*securityv1.SecurityContextConstraints
-	if len(requiredSCCName) > 0 {
-		requiredSCC, err := c.sccLister.Get(requiredSCCName)
-		if err != nil {
-			return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("failed to retrieve the required SCC %q: %w", requiredSCCName, err))
-		}
-		constraints = []*securityv1.SecurityContextConstraints{requiredSCC}
-	} else {
-		constraints, err = c.sccLister.List(labels.Everything())
-		if err != nil {
-			return nil, nil, nil, admission.NewForbidden(a, err)
-		}
+	constraints, err := c.listSortedSCCs(requiredSCCName, validatedSCCHint, specMutationAllowed)
+	if err != nil {
+		return nil, nil, nil, admission.NewForbidden(a, err)
 	}
-
-	if len(constraints) == 0 {
-		return nil, nil, nil, admission.NewForbidden(a, fmt.Errorf("no SecurityContextConstraints found in cluster"))
-	}
-	sort.Sort(sccsort.ByPriority(constraints))
-
-	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
-	// Keep the order the same for everything else
-	sort.SliceStable(constraints, func(i, j int) bool {
-		// disregard the ephemeral containers here, the rest of the pod should still
-		// not get mutated and so we are primarily interested in the SCC that matched previously
-		if !specMutationAllowed {
-			if constraints[i].Name == validatedSCCHint {
-				return true
-			}
-			if constraints[j].Name == validatedSCCHint {
-				return false
-			}
-		}
-		return i < j
-	})
 
 	providers, errs := sccmatching.CreateProvidersFromConstraints(ctx, a.GetNamespace(), constraints, c.namespaceLister)
 	logProviders(pod, providers, errs)
@@ -595,6 +565,51 @@ func (c *constraint) ValidateInitialization() error {
 		return fmt.Errorf("%s requires an authorizer", PluginName)
 	}
 	return nil
+}
+
+func (c *constraint) listSortedSCCs(
+	requiredSCCName, validatedSCCHint string,
+	specMutationAllowed bool,
+) ([]*securityv1.SecurityContextConstraints, error) {
+	var err error
+	var constraints []*securityv1.SecurityContextConstraints
+
+	if len(requiredSCCName) > 0 {
+		requiredSCC, err := c.sccLister.Get(requiredSCCName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve the required SCC %q: %w", requiredSCCName, err)
+		}
+		constraints = []*securityv1.SecurityContextConstraints{requiredSCC}
+	} else {
+		constraints, err = c.sccLister.List(labels.Everything())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(constraints) == 0 {
+		return nil, fmt.Errorf("no SecurityContextConstraints found in cluster")
+	}
+
+	sort.Sort(sccsort.ByPriority(constraints))
+
+	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
+	// Keep the order the same for everything else
+	sort.SliceStable(constraints, func(i, j int) bool {
+		// disregard the ephemeral containers here, the rest of the pod should still
+		// not get mutated and so we are primarily interested in the SCC that matched previously
+		if !specMutationAllowed {
+			if constraints[i].Name == validatedSCCHint {
+				return true
+			}
+			if constraints[j].Name == validatedSCCHint {
+				return false
+			}
+		}
+		return i < j
+	})
+
+	return constraints, nil
 }
 
 // logProviders logs what providers were found for the pod as well as any errors that were encountered

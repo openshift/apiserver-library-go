@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
@@ -1637,6 +1638,181 @@ func TestAdmitValidatedSCCSubjectType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListOrderedSCCs(t *testing.T) {
+	sccLow := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "low-priority"},
+		Priority:   ptr.To[int32](10),
+	}
+
+	sccMedium := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "medium-priority"},
+		Priority:   ptr.To[int32](20),
+	}
+
+	sccHigh := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "high-priority"},
+		Priority:   ptr.To[int32](30),
+	}
+
+	sccHighest := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "highest-priority"},
+		Priority:   ptr.To[int32](40),
+	}
+
+	allSCCs := []*securityv1.SecurityContextConstraints{sccLow, sccMedium, sccHigh, sccHighest}
+
+	tests := []struct {
+		name                string
+		requiredSCCName     string
+		validatedSCCHint    string
+		specMutationAllowed bool
+		mockLister          securityv1listers.SecurityContextConstraintsLister
+		expectedSCCs        []*securityv1.SecurityContextConstraints
+		expectError         bool
+		errorContains       string
+	}{
+		{
+			name:                "list all SCCs and sort by priority",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        []*securityv1.SecurityContextConstraints{sccHighest, sccHigh, sccMedium, sccLow},
+			expectError:         false,
+		},
+		{
+			name:                "get specific required SCC",
+			requiredSCCName:     "medium-priority",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        []*securityv1.SecurityContextConstraints{sccMedium},
+			expectError:         false,
+		},
+		{
+			name:                "error when required SCC not found",
+			requiredSCCName:     "non-existent",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "failed to retrieve the required SCC",
+		},
+		{
+			name:                "error when no SCCs found",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister([]*securityv1.SecurityContextConstraints{}, nil),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "no SecurityContextConstraints found in cluster",
+		},
+		{
+			name:                "prioritize validatedSCCHint when specMutationAllowed is false",
+			requiredSCCName:     "",
+			validatedSCCHint:    "low-priority",
+			specMutationAllowed: false,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			// low-priority should come first despite having lowest priority
+			expectedSCCs: []*securityv1.SecurityContextConstraints{sccLow, sccHighest, sccHigh, sccMedium},
+			expectError:  false,
+		},
+		{
+			name:                "validatedSCCHint ignored when specMutationAllowed is true",
+			requiredSCCName:     "",
+			validatedSCCHint:    "low-priority",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			// Normal priority order when specMutationAllowed is true
+			expectedSCCs: []*securityv1.SecurityContextConstraints{sccHighest, sccHigh, sccMedium, sccLow},
+			expectError:  false,
+		},
+		{
+			name:                "error from lister.List",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(nil, fmt.Errorf("lister error")),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "lister error",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &constraint{sccLister: tc.mockLister}
+
+			result, err := c.listSortedSCCs(tc.requiredSCCName, tc.validatedSCCHint, tc.specMutationAllowed)
+
+			// Check error expectations
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+					return
+				} else if tc.errorContains != "" && !strings.Contains(err.Error(), tc.errorContains) {
+					t.Errorf("Expected error containing %q but got %q", tc.errorContains, err.Error())
+				}
+				return
+			}
+
+			// No error expected but got one
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			// Check result expectations
+			if !reflect.DeepEqual(result, tc.expectedSCCs) {
+				t.Errorf("Expected SCCs order: %v, got: %v", getSCCNames(tc.expectedSCCs), getSCCNames(result))
+			}
+		})
+	}
+}
+
+// Helper to compare SCC lists in error messages
+func getSCCNames(sccs []*securityv1.SecurityContextConstraints) []string {
+	names := make([]string, len(sccs))
+	for i, scc := range sccs {
+		names[i] = scc.Name
+	}
+	return names
+}
+
+// Mock SCC lister for testing
+type mockSCCLister struct {
+	sccs []*securityv1.SecurityContextConstraints
+	err  error
+}
+
+func newMockSCCLister(sccs []*securityv1.SecurityContextConstraints, err error) securityv1listers.SecurityContextConstraintsLister {
+	return &mockSCCLister{sccs: sccs, err: err}
+}
+
+func (m *mockSCCLister) List(selector labels.Selector) ([]*securityv1.SecurityContextConstraints, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return m.sccs, nil
+}
+
+func (m *mockSCCLister) Get(name string) (*securityv1.SecurityContextConstraints, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	for _, scc := range m.sccs {
+		if scc.Name == name {
+			return scc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%s not found", name)
 }
 
 // testSCCAdmission is a helper to admit the pod and ensure it was validated against the expected
