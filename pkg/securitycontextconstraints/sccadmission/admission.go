@@ -593,18 +593,20 @@ func (c *constraint) listSortedSCCs(
 
 	sort.Sort(sccsort.ByPriority(constraints))
 
+	if specMutationAllowed {
+		return constraints, nil
+	}
+
 	// If mutation is not allowed and validatedSCCHint is provided, check the validated policy first.
 	// Keep the order the same for everything else
 	sort.SliceStable(constraints, func(i, j int) bool {
 		// disregard the ephemeral containers here, the rest of the pod should still
 		// not get mutated and so we are primarily interested in the SCC that matched previously
-		if !specMutationAllowed {
-			if constraints[i].Name == validatedSCCHint {
-				return true
-			}
-			if constraints[j].Name == validatedSCCHint {
-				return false
-			}
+		if constraints[i].Name == validatedSCCHint {
+			return true
+		}
+		if constraints[j].Name == validatedSCCHint {
+			return false
 		}
 		return i < j
 	})
