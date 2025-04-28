@@ -1511,7 +1511,7 @@ func TestRestrictedMessage(t *testing.T) {
 			err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
 
 			if len(testCase.expectedMessage) == 0 && err != nil {
-				t.Fatalf(err.Error())
+				t.Fatalf("%s", err.Error())
 			}
 			if len(testCase.expectedMessage) == 0 && err == nil {
 				return // we pass
