@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
@@ -21,7 +22,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
 	podhelpers "k8s.io/kubernetes/pkg/apis/core/pods"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	securityv1 "github.com/openshift/api/security/v1"
 	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
@@ -201,7 +202,6 @@ func TestAdmitCaps(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestShouldIgnore(t *testing.T) {
@@ -520,6 +520,15 @@ func TestAdmitSuccess(t *testing.T) {
 
 			if !reflect.DeepEqual(v.expectedContainerSC, containers[0].SecurityContext) {
 				t.Errorf("%s unexpected container SecurityContext diff:\n%s", k, diff.ObjectGoPrintSideBySide(v.expectedContainerSC, containers[0].SecurityContext))
+			}
+
+			// Also verify that the subject type annotation is set correctly
+			subjectType, ok := v.pod.Annotations["security.openshift.io/validated-scc-subject-type"]
+			if !ok {
+				t.Errorf("%s expected to find the validated-scc-subject-type annotation but found none", k)
+			} else if subjectType != "serviceaccount" {
+				// In the TestAdmitSuccess test, we're using a serviceaccount-based authorization
+				t.Errorf("%s expected subject type to be 'serviceaccount' but got %s", k, subjectType)
 			}
 		}
 	}
@@ -1068,10 +1077,14 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPriorityAndScoreSCCTwo.Priority = &matchingPriorityAndScorePriority
 
 	// we will expect these to sort as:
-	expectedSort := []string{"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
-		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo"}
-	sccsToSort := []*securityv1.SecurityContextConstraints{matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
-		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups}
+	expectedSort := []string{
+		"restrictive", "matchingPrioritySCCOne", "matchingPrioritySCCOneNoAllowedGroups", "matchingPrioritySCCTwo",
+		"matchingPriorityAndScoreSCCOne", "matchingPriorityAndScoreSCCTwo",
+	}
+	sccsToSort := []*securityv1.SecurityContextConstraints{
+		matchingPriorityAndScoreSCCTwo, matchingPriorityAndScoreSCCOne,
+		matchingPrioritySCCTwo, matchingPrioritySCCOne, restricted, matchingPrioritySCCOneNoAllowedGroups,
+	}
 
 	sort.Sort(sccsort.ByPriority(sccsToSort))
 
@@ -1122,7 +1135,6 @@ func TestAdmitWithPrioritizedSCC(t *testing.T) {
 	matchingPrioritySCCOneForcingOtherPod = matchingPrioritySCCOnePod.DeepCopy()
 	matchingPrioritySCCOneForcingOtherPod.Annotations[securityv1.RequiredSCCAnnotation] = matchingPrioritySCCOneNoAllowedGroups.Name
 	testSCCAdmissionError(matchingPrioritySCCOneForcingOtherPod, plugin, "provider \"matchingPrioritySCCOneNoAllowedGroups\": Forbidden: not usable by user or serviceaccount", t)
-
 }
 
 func TestAdmitSeccomp(t *testing.T) {
@@ -1233,11 +1245,9 @@ func TestAdmitSeccomp(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
-
 	mutatingSCC := restrictiveSCC()
 	mutatingSCC.Name = "mutating-scc"
 
@@ -1415,7 +1425,6 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 				validatedSCC, ok := testCase.newPod.Annotations[securityv1.ValidatedSCCAnnotation]
 				if !ok {
 					t.Errorf("expected %q to find the validated annotation on the pod for the scc but found none", testCaseName)
-
 				} else if validatedSCC != testCase.expectedSCC {
 					t.Errorf("%q should have validated against %q but found %q", testCaseName, testCase.expectedSCC, validatedSCC)
 				}
@@ -1426,7 +1435,6 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func TestRestrictedMessage(t *testing.T) {
@@ -1440,7 +1448,7 @@ func TestRestrictedMessage(t *testing.T) {
 
 	// restrictedv2 must not match, but we do have permission to use it
 	restrictv2 := restrictiveSCC()
-	restrictv2.AllowPrivilegeEscalation = pointer.Bool(false)
+	restrictv2.AllowPrivilegeEscalation = ptr.To(false)
 	restrictv2.Name = "restricted-v2"
 
 	restrictedv2Pod := goodPod()
@@ -1450,12 +1458,12 @@ func TestRestrictedMessage(t *testing.T) {
 	simplePod := goodPod()
 	simplePod.Spec.Containers[0].Name = "simple-pod"
 	simplePod.Spec.Containers[0].Image = "test-image:0.1"
-	simplePod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(true)
+	simplePod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
 
 	privilegedPod := goodPod()
 	privilegedPod.Spec.Containers[0].Name = "simple-pod"
 	privilegedPod.Spec.Containers[0].Image = "test-image:0.1"
-	privilegedPod.Spec.Containers[0].SecurityContext.Privileged = pointer.Bool(true)
+	privilegedPod.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
 
 	tryRestrictedMessage := "fails to validate against the `restricted-v2` security context constraint, but would validate successfully against the `restricted`"
 
@@ -1511,7 +1519,7 @@ func TestRestrictedMessage(t *testing.T) {
 			err := plugin.(admission.MutationInterface).Admit(context.TODO(), attrs, nil)
 
 			if len(testCase.expectedMessage) == 0 && err != nil {
-				t.Fatalf(err.Error())
+				t.Fatal(err.Error())
 			}
 			if len(testCase.expectedMessage) == 0 && err == nil {
 				return // we pass
@@ -1528,7 +1536,283 @@ func TestRestrictedMessage(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestAdmitValidatedSCCSubjectType(t *testing.T) {
+	// Create SCCs
+	userSCC := laxSCC()
+	userSCC.Name = "user-scc"
+	userSCC.Users = []string{"test-user"}
+	userSCC.Groups = []string{}
+
+	saSCC := laxSCC()
+	saSCC.Name = "sa-scc"
+	saSCC.Users = []string{}
+	saSCC.Groups = []string{}
+
+	// Setup lister for admission controller
+	nsLister := createNamespaceLister(t, createNamespaceForTest())
+	sccLister := createSCCLister(t, []*securityv1.SecurityContextConstraints{
+		userSCC,
+		saSCC,
+	})
+
+	tests := map[string]struct {
+		pod             *coreapi.Pod
+		userInfo        user.Info
+		authorizer      *sccTestAuthorizer
+		expectedSCC     string
+		expectedSubject string
+	}{
+		"user authorization": {
+			pod: goodPod(),
+			userInfo: &user.DefaultInfo{
+				Name: "test-user",
+			},
+			authorizer: &sccTestAuthorizer{
+				t:    t,
+				user: "test-user",
+				scc:  "user-scc",
+			},
+			expectedSCC:     "user-scc",
+			expectedSubject: "user",
+		},
+		"serviceaccount authorization": {
+			pod: goodPod(),
+			userInfo: &user.DefaultInfo{
+				Name: "not-in-scc",
+			},
+			authorizer: &sccTestAuthorizer{
+				t:         t,
+				user:      "system:serviceaccount:default:default",
+				namespace: "default",
+				scc:       "sa-scc",
+			},
+			expectedSCC:     "sa-scc",
+			expectedSubject: "serviceaccount",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Create the admission controller
+			c := newTestAdmission(sccLister, nsLister, test.authorizer)
+
+			// Create the attributes for the admission request to create a Pod
+			createPodAttrs := admission.NewAttributesRecord(
+				test.pod, nil,
+				coreapi.Kind("Pod").WithVersion("version"),
+				test.pod.Namespace, test.pod.Name,
+				coreapi.Resource("pods").WithVersion("version"), "",
+				admission.Create, nil,
+				false,
+				test.userInfo,
+			)
+
+			// admission.MutationInterface -> mutating admission plugin
+			err := c.(admission.MutationInterface).Admit(context.TODO(), createPodAttrs, nil)
+			if err != nil {
+				t.Errorf("Expected no admission errors but received: %v", err)
+				return
+			}
+
+			// Verify the validated annotation is set correctly
+			validatedSCC, ok := test.pod.Annotations[securityv1.ValidatedSCCAnnotation]
+			if !ok {
+				t.Errorf("Expected to find the validated SCC annotation but found none")
+				return
+			}
+			if validatedSCC != test.expectedSCC {
+				t.Errorf("Expected validatedSCC to be %s but got %s", test.expectedSCC, validatedSCC)
+				return
+			}
+
+			// Verify the new subject type annotation exists and has the correct value
+			subjectType, ok := test.pod.Annotations["security.openshift.io/validated-scc-subject-type"]
+			if !ok {
+				t.Errorf("Expected to find the validated-scc-subject-type annotation but found none")
+				return
+			}
+			if subjectType != test.expectedSubject {
+				t.Errorf("Expected subject type to be %s but got %s", test.expectedSubject, subjectType)
+			}
+		})
+	}
+}
+
+func TestListOrderedSCCs(t *testing.T) {
+	sccLow := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "low-priority"},
+		Priority:   ptr.To[int32](10),
+	}
+
+	sccMedium := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "medium-priority"},
+		Priority:   ptr.To[int32](20),
+	}
+
+	sccHigh := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "high-priority"},
+		Priority:   ptr.To[int32](30),
+	}
+
+	sccHighest := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{Name: "highest-priority"},
+		Priority:   ptr.To[int32](40),
+	}
+
+	allSCCs := []*securityv1.SecurityContextConstraints{sccLow, sccMedium, sccHigh, sccHighest}
+
+	tests := []struct {
+		name                string
+		requiredSCCName     string
+		validatedSCCHint    string
+		specMutationAllowed bool
+		mockLister          securityv1listers.SecurityContextConstraintsLister
+		expectedSCCs        []*securityv1.SecurityContextConstraints
+		expectError         bool
+		errorContains       string
+	}{
+		{
+			name:                "list all SCCs and sort by priority",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        []*securityv1.SecurityContextConstraints{sccHighest, sccHigh, sccMedium, sccLow},
+			expectError:         false,
+		},
+		{
+			name:                "get specific required SCC",
+			requiredSCCName:     "medium-priority",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        []*securityv1.SecurityContextConstraints{sccMedium},
+			expectError:         false,
+		},
+		{
+			name:                "error when required SCC not found",
+			requiredSCCName:     "non-existent",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "failed to retrieve the required SCC",
+		},
+		{
+			name:                "error when no SCCs found",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister([]*securityv1.SecurityContextConstraints{}, nil),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "no SecurityContextConstraints found in cluster",
+		},
+		{
+			name:                "prioritize validatedSCCHint when specMutationAllowed is false",
+			requiredSCCName:     "",
+			validatedSCCHint:    "low-priority",
+			specMutationAllowed: false,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			// low-priority should come first despite having lowest priority
+			expectedSCCs: []*securityv1.SecurityContextConstraints{sccLow, sccHighest, sccHigh, sccMedium},
+			expectError:  false,
+		},
+		{
+			name:                "validatedSCCHint ignored when specMutationAllowed is true",
+			requiredSCCName:     "",
+			validatedSCCHint:    "low-priority",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(allSCCs, nil),
+			// Normal priority order when specMutationAllowed is true
+			expectedSCCs: []*securityv1.SecurityContextConstraints{sccHighest, sccHigh, sccMedium, sccLow},
+			expectError:  false,
+		},
+		{
+			name:                "error from lister.List",
+			requiredSCCName:     "",
+			validatedSCCHint:    "",
+			specMutationAllowed: true,
+			mockLister:          newMockSCCLister(nil, fmt.Errorf("lister error")),
+			expectedSCCs:        nil,
+			expectError:         true,
+			errorContains:       "lister error",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &constraint{sccLister: tc.mockLister}
+
+			result, err := c.listSortedSCCs(tc.requiredSCCName, tc.validatedSCCHint, tc.specMutationAllowed)
+
+			// Check error expectations
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+					return
+				} else if tc.errorContains != "" && !strings.Contains(err.Error(), tc.errorContains) {
+					t.Errorf("Expected error containing %q but got %q", tc.errorContains, err.Error())
+				}
+				return
+			}
+
+			// No error expected but got one
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			// Check result expectations
+			if !reflect.DeepEqual(result, tc.expectedSCCs) {
+				t.Errorf("Expected SCCs order: %v, got: %v", getSCCNames(tc.expectedSCCs), getSCCNames(result))
+			}
+		})
+	}
+}
+
+// Helper to compare SCC lists in error messages
+func getSCCNames(sccs []*securityv1.SecurityContextConstraints) []string {
+	names := make([]string, len(sccs))
+	for i, scc := range sccs {
+		names[i] = scc.Name
+	}
+	return names
+}
+
+// Mock SCC lister for testing
+type mockSCCLister struct {
+	sccs []*securityv1.SecurityContextConstraints
+	err  error
+}
+
+func newMockSCCLister(sccs []*securityv1.SecurityContextConstraints, err error) securityv1listers.SecurityContextConstraintsLister {
+	return &mockSCCLister{sccs: sccs, err: err}
+}
+
+func (m *mockSCCLister) List(selector labels.Selector) ([]*securityv1.SecurityContextConstraints, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return m.sccs, nil
+}
+
+func (m *mockSCCLister) Get(name string) (*securityv1.SecurityContextConstraints, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	for _, scc := range m.sccs {
+		if scc.Name == name {
+			return scc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%s not found", name)
 }
 
 // testSCCAdmission is a helper to admit the pod and ensure it was validated against the expected
@@ -1840,6 +2124,7 @@ func createNamespaceListerAndIndexer(t *testing.T, namespaces ...*corev1.Namespa
 	}
 	return lister, indexer
 }
+
 func createNamespaceLister(t *testing.T, namespaces ...*corev1.Namespace) corev1listers.NamespaceLister {
 	t.Helper()
 
