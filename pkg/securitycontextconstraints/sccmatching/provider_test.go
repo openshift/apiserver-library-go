@@ -346,7 +346,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failUnsetRequireHostUser": {
 			pod:           defaultPod(),
 			scc:           failUserNamespaceSCC,
-			expectedError: `spec.hostUsers: Invalid value: "null": Host Users must be set to false`,
+			expectedError: `spec.hostUsers: Invalid value: null: Host Users must be set to false`,
 		},
 	}
 	for k, v := range errorCases {
