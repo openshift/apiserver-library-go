@@ -152,7 +152,7 @@ func TestUpdateQuota(t *testing.T) {
 		}
 
 		if !equality.Semantic.DeepEqual(tc.expectedQuota(), actualQuota) {
-			t.Errorf("%s: %v", tc.name, utildiff.ObjectDiff(tc.expectedQuota(), actualQuota))
+			t.Errorf("%s: %v", tc.name, utildiff.Diff(tc.expectedQuota(), actualQuota))
 			continue
 		}
 	}
@@ -352,7 +352,7 @@ func TestGetQuota(t *testing.T) {
 					t.Errorf("%s: unexpected error: %v", tc.name, err)
 					continue
 				}
-				t.Errorf("%s: %v equal? %v", tc.name, utildiff.ObjectDiff(expectedV1, actualV1), equality.Semantic.DeepEqual(expectedV1, actualV1))
+				t.Errorf("%s: %v equal? %v", tc.name, utildiff.Diff(expectedV1, actualV1), equality.Semantic.DeepEqual(expectedV1, actualV1))
 			}
 			continue
 		}
