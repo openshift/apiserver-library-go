@@ -17,8 +17,11 @@ limitations under the License.
 package sysctl
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/util/version"
 	api "k8s.io/kubernetes/pkg/apis/core"
 )
 
@@ -100,5 +103,64 @@ func TestValidate(t *testing.T) {
 
 		testAllowed()
 		testDisallowed()
+	}
+}
+
+func TestGetSafeSysctlAllowlist(t *testing.T) {
+	var legacySafeSysctls = []string{
+		"kernel.shm_rmid_forced",
+		"net.ipv4.ip_local_port_range",
+		"net.ipv4.tcp_syncookies",
+		"net.ipv4.ping_group_range",
+		"net.ipv4.ip_unprivileged_port_start",
+		"net.ipv4.tcp_keepalive_time",
+		"net.ipv4.tcp_fin_timeout",
+		"net.ipv4.tcp_keepalive_intvl",
+		"net.ipv4.tcp_keepalive_probes",
+	}
+
+	tests := []struct {
+		name       string
+		getVersion func() (*version.Version, error)
+		want       []string
+	}{
+		{
+			name: "failed to get kernelVersion, only return the legacy safeSysctls list",
+			getVersion: func() (*version.Version, error) {
+				return nil, fmt.Errorf("fork error")
+			},
+			want: legacySafeSysctls,
+		},
+		{
+			name: "kernelVersion is 3.18.0, return the legacy safeSysctls list and net.ipv4.ip_local_reserved_ports",
+			getVersion: func() (*version.Version, error) {
+				kernelVersionStr := "3.18.0-957.27.2.el7.x86_64"
+				return version.ParseGeneric(kernelVersionStr)
+			},
+			want: append(
+				legacySafeSysctls,
+				"net.ipv4.ip_local_reserved_ports",
+			),
+		},
+		{
+			name: "kernelVersion is 5.15.0, return the legacy safeSysctls list and safeSysctls with kernelVersion below 5.15.0",
+			getVersion: func() (*version.Version, error) {
+				kernelVersionStr := "5.15.0-75-generic"
+				return version.ParseGeneric(kernelVersionStr)
+			},
+			want: append(
+				legacySafeSysctls,
+				"net.ipv4.ip_local_reserved_ports",
+				"net.ipv4.tcp_rmem",
+				"net.ipv4.tcp_wmem",
+			),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getSafeSysctlAllowlist(tt.getVersion); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getSafeSysctlAllowlist() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
