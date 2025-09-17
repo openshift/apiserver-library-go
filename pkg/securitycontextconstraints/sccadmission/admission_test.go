@@ -891,7 +891,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister)
 
 			if !reflect.DeepEqual(scc, v.scc()) {
-				diff := diff.ObjectDiff(scc, v.scc())
+				diff := diff.Diff(scc, v.scc())
 				t.Fatalf("%s createProvidersFromConstraints mutated constraints. diff:\n%s", k, diff)
 			}
 			if len(v.expectedErr) > 0 && len(errs) != 1 {

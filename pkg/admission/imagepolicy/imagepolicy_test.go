@@ -919,7 +919,7 @@ func TestAdmissionResolveImages(t *testing.T) {
 				return
 			}
 			if !reflect.DeepEqual(test.expect, test.attrs.GetObject()) {
-				t.Errorf("%d: unequal: %s", i, diff.ObjectReflectDiff(test.expect, test.attrs.GetObject()))
+				t.Errorf("%d: unequal: %s", i, diff.Diff(test.expect, test.attrs.GetObject()))
 			}
 
 			if err := p.Validate(context.TODO(), test.attrs, nil); err != nil {
@@ -927,7 +927,7 @@ func TestAdmissionResolveImages(t *testing.T) {
 				return
 			}
 			if !reflect.DeepEqual(test.expect, test.attrs.GetObject()) {
-				t.Errorf("%d: unequal: %s", i, diff.ObjectReflectDiff(test.expect, test.attrs.GetObject()))
+				t.Errorf("%d: unequal: %s", i, diff.Diff(test.expect, test.attrs.GetObject()))
 			}
 		})
 	}

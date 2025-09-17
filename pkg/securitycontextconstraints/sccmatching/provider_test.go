@@ -69,7 +69,7 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	// Creating the provider or the security context should not have mutated the scc or pod
 	// since all the strategies were permissive
 	if !reflect.DeepEqual(createPod(), pod) {
-		diff := diff.ObjectDiff(createPod(), pod)
+		diff := diff.Diff(createPod(), pod)
 		t.Errorf("pod was mutated by CreatePodSecurityContext. diff:\n%s", diff)
 	}
 	if !reflect.DeepEqual(createSCC(), scc) {
@@ -126,7 +126,7 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	// Creating the provider or the security context should not have mutated the scc or pod
 	// since all the strategies were permissive
 	if !reflect.DeepEqual(createPod(), pod) {
-		diff := diff.ObjectDiff(createPod(), pod)
+		diff := diff.Diff(createPod(), pod)
 		t.Errorf("pod was mutated by CreateContainerSecurityContext. diff:\n%s", diff)
 	}
 	if !reflect.DeepEqual(createSCC(), scc) {
@@ -346,7 +346,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failUnsetRequireHostUser": {
 			pod:           defaultPod(),
 			scc:           failUserNamespaceSCC,
-			expectedError: `spec.hostUsers: Invalid value: "null": Host Users must be set to false`,
+			expectedError: `spec.hostUsers: Invalid value: null: Host Users must be set to false`,
 		},
 	}
 	for k, v := range errorCases {
@@ -1118,7 +1118,7 @@ func TestGenerateNonRootSecurityContextOnNonZeroRunAsUser(t *testing.T) {
 		}
 
 		if !equality.Semantic.DeepEqual(v.expectedSC, sc) {
-			t.Errorf("%s expected security context does not match the actual: %s", k, diff.ObjectDiff(v.expectedSC, sc))
+			t.Errorf("%s expected security context does not match the actual: %s", k, diff.Diff(v.expectedSC, sc))
 		}
 
 	}
