@@ -54,8 +54,9 @@ func (s *mustRunAs) Validate(fldPath *field.Path, _ *api.Pod, groups []int64) fi
 
 	for _, group := range groups {
 		if !s.isGroupValid(group) {
-			detail := fmt.Sprintf("%d is not an allowed group", group)
-			allErrs = append(allErrs, field.Invalid(fldPath.Child(s.field), groups, detail))
+			rangesStr := formatRanges(s.ranges) // e.g., "[1000, 65534]"
+			detail := fmt.Sprintf("must be in the ranges: %s", rangesStr)
+			allErrs = append(allErrs, field.Invalid(fldPath.Child(s.field), group, detail))
 		}
 	}
 
@@ -73,4 +74,15 @@ func (s *mustRunAs) isGroupValid(group int64) bool {
 
 func fallsInRange(group int64, rng securityv1.IDRange) bool {
 	return group >= rng.Min && group <= rng.Max
+}
+
+func formatRanges(ranges []securityv1.IDRange) string {
+	rangesStr := ""
+	for i, rng := range ranges {
+		if i > 0 {
+			rangesStr += ", "
+		}
+		rangesStr += fmt.Sprintf("[%d, %d]", rng.Min, rng.Max)
+	}
+	return rangesStr
 }

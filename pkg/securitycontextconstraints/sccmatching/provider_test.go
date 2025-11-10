@@ -266,7 +266,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failSupplementalGroupOutOfRange": {
 			pod:           failSupplementalGroupPod,
 			scc:           failSupplementalGroupSCC,
-			expectedError: "999 is not an allowed group",
+			expectedError: "must be in the ranges: [1, 1]",
 		},
 		"failSupplementalGroupEmpty": {
 			pod:           defaultPod(),
@@ -276,7 +276,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failFSGroupOutOfRange": {
 			pod:           failFSGroupPod,
 			scc:           failFSGroupSCC,
-			expectedError: "999 is not an allowed group",
+			expectedError: "must be in the ranges: [1, 1]",
 		},
 		"failFSGroupEmpty": {
 			pod:           defaultPod(),
