@@ -21,12 +21,12 @@ func TestCreateRunAsGroupStrategy(t *testing.T) {
 		strategyType string
 	}{
 		{
-			name: "Empty type defaults to RunAsAny",
+			name: "Empty type defaults to MustRunAsRange",
 			opts: &securityv1.RunAsGroupStrategyOptions{
 				Type: "",
 			},
 			expectError:  false,
-			strategyType: "RunAsAny",
+			strategyType: "MustRunAsRange",
 		},
 		{
 			name: "RunAsAny strategy",

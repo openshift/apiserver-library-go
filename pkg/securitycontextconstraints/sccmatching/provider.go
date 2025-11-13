@@ -452,9 +452,20 @@ func createUserStrategy(opts *securityv1.RunAsUserStrategyOptions) (user.RunAsUs
 
 // createRunAsGroupStrategy creates a new group strategy.
 func createRunAsGroupStrategy(opts *securityv1.RunAsGroupStrategyOptions) (runasgroup.RunAsGroupSecurityContextConstraintsStrategy, error) {
-	// If no strategy is specified, default to RunAsAny
+	// If no strategy is specified, default to MustRunAs with ranges [1000, 65534]
 	if opts.Type == "" {
-		return runasgroup.NewRunAsAny(opts)
+		min := int64(1000)
+		max := int64(65534)
+		defaultOpts := &securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyMustRunAs,
+			Ranges: []securityv1.RunAsGroupIDRange{
+				{
+					Min: &min,
+					Max: &max,
+				},
+			},
+		}
+		return runasgroup.NewMustRunAsRange(defaultOpts)
 	}
 
 	switch opts.Type {

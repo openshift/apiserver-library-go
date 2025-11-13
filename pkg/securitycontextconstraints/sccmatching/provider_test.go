@@ -41,6 +41,9 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 			RunAsUser: securityv1.RunAsUserStrategyOptions{
 				Type: securityv1.RunAsUserStrategyRunAsAny,
 			},
+			RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+				Type: securityv1.RunAsGroupStrategyRunAsAny,
+			},
 			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 				Type: securityv1.SELinuxStrategyRunAsAny,
 			},
@@ -97,6 +100,9 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 			},
 			RunAsUser: securityv1.RunAsUserStrategyOptions{
 				Type: securityv1.RunAsUserStrategyRunAsAny,
+			},
+			RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+				Type: securityv1.RunAsGroupStrategyRunAsAny,
 			},
 			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 				Type: securityv1.SELinuxStrategyRunAsAny,
@@ -1132,6 +1138,9 @@ func defaultSCC() *securityv1.SecurityContextConstraints {
 		},
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyRunAsAny,
+		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyRunAsAny,
 		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyRunAsAny,
