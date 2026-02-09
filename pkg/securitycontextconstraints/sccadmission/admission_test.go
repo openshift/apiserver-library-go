@@ -1964,6 +1964,9 @@ func laxSCC() *securityv1.SecurityContextConstraints {
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyRunAsAny,
 		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyRunAsAny,
+		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyRunAsAny,
 		},
@@ -1979,6 +1982,7 @@ func laxSCC() *securityv1.SecurityContextConstraints {
 
 func restrictiveSCC() *securityv1.SecurityContextConstraints {
 	var exactUID int64 = 999
+	var exactGID int64 = 999
 	return &securityv1.SecurityContextConstraints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "restrictive",
@@ -1986,6 +1990,12 @@ func restrictiveSCC() *securityv1.SecurityContextConstraints {
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyMustRunAs,
 			UID:  &exactUID,
+		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyMustRunAs,
+			Ranges: []securityv1.RunAsGroupIDRange{
+				{Min: &exactGID, Max: &exactGID},
+			},
 		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyMustRunAs,
@@ -2042,6 +2052,9 @@ func saSCC() *securityv1.SecurityContextConstraints {
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyMustRunAsRange,
 		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyRunAsAny,
+		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyMustRunAs,
 		},
@@ -2064,6 +2077,9 @@ func saExactSCC() *securityv1.SecurityContextConstraints {
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyMustRunAs,
 			UID:  &exactUID,
+		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyRunAsAny,
 		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyMustRunAs,

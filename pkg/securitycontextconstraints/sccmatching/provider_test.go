@@ -41,6 +41,9 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 			RunAsUser: securityv1.RunAsUserStrategyOptions{
 				Type: securityv1.RunAsUserStrategyRunAsAny,
 			},
+			RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+				Type: securityv1.RunAsGroupStrategyRunAsAny,
+			},
 			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 				Type: securityv1.SELinuxStrategyRunAsAny,
 			},
@@ -97,6 +100,9 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 			},
 			RunAsUser: securityv1.RunAsUserStrategyOptions{
 				Type: securityv1.RunAsUserStrategyRunAsAny,
+			},
+			RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+				Type: securityv1.RunAsGroupStrategyRunAsAny,
 			},
 			SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 				Type: securityv1.SELinuxStrategyRunAsAny,
@@ -266,7 +272,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failSupplementalGroupOutOfRange": {
 			pod:           failSupplementalGroupPod,
 			scc:           failSupplementalGroupSCC,
-			expectedError: "999 is not an allowed group",
+			expectedError: "must be in the ranges: [1, 1]",
 		},
 		"failSupplementalGroupEmpty": {
 			pod:           defaultPod(),
@@ -276,7 +282,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		"failFSGroupOutOfRange": {
 			pod:           failFSGroupPod,
 			scc:           failFSGroupSCC,
-			expectedError: "999 is not an allowed group",
+			expectedError: "must be in the ranges: [1, 1]",
 		},
 		"failFSGroupEmpty": {
 			pod:           defaultPod(),
@@ -1132,6 +1138,9 @@ func defaultSCC() *securityv1.SecurityContextConstraints {
 		},
 		RunAsUser: securityv1.RunAsUserStrategyOptions{
 			Type: securityv1.RunAsUserStrategyRunAsAny,
+		},
+		RunAsGroup: securityv1.RunAsGroupStrategyOptions{
+			Type: securityv1.RunAsGroupStrategyRunAsAny,
 		},
 		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
 			Type: securityv1.SELinuxStrategyRunAsAny,
