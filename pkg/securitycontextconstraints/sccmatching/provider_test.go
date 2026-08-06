@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	securityv1 "github.com/openshift/api/security/v1"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
@@ -136,13 +137,13 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 
 func TestValidatePodSecurityContextFailures(t *testing.T) {
 	failHostNetworkPod := defaultPod()
-	failHostNetworkPod.Spec.SecurityContext.HostNetwork = true
+	failHostNetworkPod.Spec.HostNetwork = true
 
 	failHostPIDPod := defaultPod()
-	failHostPIDPod.Spec.SecurityContext.HostPID = true
+	failHostPIDPod.Spec.HostPID = true
 
 	failHostIPCPod := defaultPod()
-	failHostIPCPod.Spec.SecurityContext.HostIPC = true
+	failHostIPCPod.Spec.HostIPC = true
 
 	failSupplementalGroupPod := defaultPod()
 	failSupplementalGroupPod.Spec.SecurityContext.SupplementalGroups = []int64{999}
@@ -241,7 +242,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 
 	failUserNamespacePod := defaultPod()
 	trueVar := true
-	failUserNamespacePod.Spec.SecurityContext.HostUsers = &trueVar
+	failUserNamespacePod.Spec.HostUsers = &trueVar
 
 	errorCases := map[string]struct {
 		pod           *api.Pod
@@ -511,17 +512,17 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 	hostNetworkSCC := defaultSCC()
 	hostNetworkSCC.AllowHostNetwork = true
 	hostNetworkPod := defaultPod()
-	hostNetworkPod.Spec.SecurityContext.HostNetwork = true
+	hostNetworkPod.Spec.HostNetwork = true
 
 	hostPIDSCC := defaultSCC()
 	hostPIDSCC.AllowHostPID = true
 	hostPIDPod := defaultPod()
-	hostPIDPod.Spec.SecurityContext.HostPID = true
+	hostPIDPod.Spec.HostPID = true
 
 	hostIPCSCC := defaultSCC()
 	hostIPCSCC.AllowHostIPC = true
 	hostIPCPod := defaultPod()
-	hostIPCPod.Spec.SecurityContext.HostIPC = true
+	hostIPCPod.Spec.HostIPC = true
 
 	supGroupSCC := defaultSCC()
 	supGroupSCC.SupplementalGroups = securityv1.SupplementalGroupsStrategyOptions{
@@ -621,14 +622,14 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 
 	userNamespaceOnPod := defaultPod()
 	falseVar := false
-	userNamespaceOnPod.Spec.SecurityContext.HostUsers = &falseVar
+	userNamespaceOnPod.Spec.HostUsers = &falseVar
 
 	userNamespaceOffSCC := defaultSCC()
 	userNamespaceOffSCC.UserNamespaceLevel = securityv1.NamespaceLevelAllowHost
 
 	userNamespaceOffPod := defaultPod()
 	trueVar := true
-	userNamespaceOffPod.Spec.SecurityContext.HostUsers = &trueVar
+	userNamespaceOffPod.Spec.HostUsers = &trueVar
 
 	successCases := map[string]struct {
 		pod *api.Pod
@@ -1656,7 +1657,7 @@ func (p *projectedVolumeCreator) WithSA(path string) *projectedVolumeCreator {
 	p.volumes["sa"] = api.VolumeProjection{
 		ServiceAccountToken: &api.ServiceAccountTokenProjection{
 			Path:              path,
-			ExpirationSeconds: 3607,
+			ExpirationSeconds: ptr.To[int64](3607),
 		},
 	}
 	return p
