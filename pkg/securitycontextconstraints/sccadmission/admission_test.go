@@ -29,8 +29,28 @@ import (
 	securityv1listers "github.com/openshift/client-go/security/listers/security/v1"
 
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
+	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sysctl"
 	sccsort "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util/sort"
 )
+
+// testNodeLister is a simple implementation for testing that returns empty node list
+type testNodeLister struct{}
+
+func (f *testNodeLister) List(selector labels.Selector) ([]*corev1.Node, error) {
+	return []*corev1.Node{}, nil
+}
+
+func (f *testNodeLister) Get(name string) (*corev1.Node, error) {
+	return nil, fmt.Errorf("node %s not found", name)
+}
+
+var _ corev1listers.NodeLister = &testNodeLister{}
+
+// getTestSysctls returns a default set of sysctls for testing purposes.
+// This mimics the behavior of sysctl.SafeSysctlAllowlist with a testNodeLister.
+func getTestSysctls() []string {
+	return sysctl.SafeSysctlAllowlist(&testNodeLister{})
+}
 
 // createSAForTest Build and Initializes a ServiceAccount for tests
 func createSAForTest() *corev1.ServiceAccount {
@@ -60,6 +80,7 @@ func newTestAdmission(sccLister securityv1listers.SecurityContextConstraintsList
 	return &constraint{
 		Handler:         admission.NewHandler(admission.Create),
 		namespaceLister: nsLister,
+		nodeLister:      &testNodeLister{},
 		sccLister:       sccLister,
 		listersSynced:   []cache.InformerSynced{func() bool { return true }},
 		authorizer:      authorizer,
@@ -987,7 +1008,7 @@ func TestCreateProvidersFromConstraints(t *testing.T) {
 			// let timeout based failures fail fast
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 			defer cancel()
-			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister)
+			_, errs := sccmatching.CreateProvidersFromConstraints(ctx, attributes.GetNamespace(), []*securityv1.SecurityContextConstraints{scc}, nsLister, &testNodeLister{})
 
 			if !reflect.DeepEqual(scc, v.scc()) {
 				diff := diff.Diff(scc, v.scc())
@@ -1390,7 +1411,7 @@ func TestAdmitPreferNonmutatingWhenPossible(t *testing.T) {
 		},
 	}
 
-	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC)
+	mutatingProvider, err := sccmatching.NewSimpleProvider(mutatingSCC, getTestSysctls())
 	if err != nil {
 		t.Fatalf("failed to create a mutating provider: %v", err)
 	}

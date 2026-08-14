@@ -12,14 +12,36 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/utils/pointer"
 
 	securityv1 "github.com/openshift/api/security/v1"
+	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sysctl"
 	sccutil "github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/util"
 )
+
+// fakeNodeLister is a simple implementation for testing that returns empty node list
+type fakeNodeLister struct{}
+
+func (f *fakeNodeLister) List(selector labels.Selector) ([]*corev1.Node, error) {
+	return []*corev1.Node{}, nil
+}
+
+func (f *fakeNodeLister) Get(name string) (*corev1.Node, error) {
+	return nil, fmt.Errorf("node %s not found", name)
+}
+
+var _ corev1listers.NodeLister = &fakeNodeLister{}
+
+// getTestSysctls returns a default set of sysctls for testing purposes.
+// This mimics the behavior of sysctl.SafeSysctlAllowlist with a fakeNodeLister.
+func getTestSysctls() []string {
+	return sysctl.SafeSysctlAllowlist(&fakeNodeLister{})
+}
 
 func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	// Create a pod with a security context that needs filling in
@@ -57,7 +79,7 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	pod := createPod()
 	scc := createSCC()
 
-	provider, err := NewSimpleProvider(scc)
+	provider, err := NewSimpleProvider(scc, getTestSysctls())
 	if err != nil {
 		t.Fatalf("unable to create provider %v", err)
 	}
@@ -114,7 +136,7 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	pod := createPod()
 	scc := createSCC()
 
-	provider, err := NewSimpleProvider(scc)
+	provider, err := NewSimpleProvider(scc, getTestSysctls())
 	if err != nil {
 		t.Fatalf("unable to create provider %v", err)
 	}
@@ -350,7 +372,7 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 		},
 	}
 	for k, v := range errorCases {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
@@ -492,7 +514,7 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 	}
 
 	for k, v := range errorCases {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
@@ -713,7 +735,7 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 	}
 
 	for k, v := range successCases {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
@@ -885,7 +907,7 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 	}
 
 	for k, v := range successCases {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Fatalf("unable to create provider %v", err)
 		}
@@ -952,7 +974,7 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
@@ -1106,7 +1128,7 @@ func TestGenerateNonRootSecurityContextOnNonZeroRunAsUser(t *testing.T) {
 	}
 
 	for k, v := range tests {
-		provider, err := NewSimpleProvider(v.scc)
+		provider, err := NewSimpleProvider(v.scc, getTestSysctls())
 		if err != nil {
 			t.Errorf("%s unable to create provider %v", k, err)
 			continue
@@ -1218,7 +1240,7 @@ func TestValidateAllowedVolumes(t *testing.T) {
 		// create an SCC that allows no volumes
 		scc := defaultSCC()
 
-		provider, err := NewSimpleProvider(scc)
+		provider, err := NewSimpleProvider(scc, getTestSysctls())
 		if err != nil {
 			t.Errorf("error creating provider for %s: %s", fieldVal.Name, err.Error())
 			continue
@@ -1253,7 +1275,7 @@ func TestValidateAllowedVolumes(t *testing.T) {
 func TestValidateProjectedVolume(t *testing.T) {
 	pod := defaultPod()
 	scc := defaultSCC()
-	provider, err := NewSimpleProvider(scc)
+	provider, err := NewSimpleProvider(scc, getTestSysctls())
 	require.NoError(t, err, "error creating provider")
 
 	tests := []struct {
@@ -1373,7 +1395,7 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 	scc := defaultSCC()
 	scc.AllowPrivilegeEscalation = &no
 
-	provider, err := NewSimpleProvider(scc)
+	provider, err := NewSimpleProvider(scc, getTestSysctls())
 	if err != nil {
 		t.Errorf("error creating provider: %v", err.Error())
 	}
@@ -1417,17 +1439,17 @@ func TestValidateAllowPrivilegeEscalation(t *testing.T) {
 }
 
 func TestSeccompAnnotationsFieldsGeneration(t *testing.T) {
-	noSeccompProvider, err := NewSimpleProvider(defaultSCC())
+	noSeccompProvider, err := NewSimpleProvider(defaultSCC(), getTestSysctls())
 	require.NoError(t, err)
 
 	sccWildcardSeccomp := defaultSCC()
 	sccWildcardSeccomp.SeccompProfiles = []string{"*"}
-	wildcardSeccompProvider, err := NewSimpleProvider(sccWildcardSeccomp)
+	wildcardSeccompProvider, err := NewSimpleProvider(sccWildcardSeccomp, getTestSysctls())
 	require.NoError(t, err)
 
 	sccGenerateSeccomp := defaultSCC()
 	sccGenerateSeccomp.SeccompProfiles = []string{corev1.SeccompProfileRuntimeDefault}
-	generateSeccompProvider, err := NewSimpleProvider(sccGenerateSeccomp)
+	generateSeccompProvider, err := NewSimpleProvider(sccGenerateSeccomp, getTestSysctls())
 	require.NoError(t, err)
 
 	podPodSeccompAnnotation := defaultPod()
