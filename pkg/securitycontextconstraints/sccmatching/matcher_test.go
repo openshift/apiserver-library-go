@@ -608,7 +608,7 @@ func TestAssignSecurityContextErrorFieldPaths(t *testing.T) {
 			scc:  baseSCC(),
 			pod: func() *kapi.Pod {
 				p := basePod()
-				p.Spec.SecurityContext.HostNetwork = true
+				p.Spec.HostNetwork = true
 				return p
 			}(),
 			expectedFieldPath: "spec.hostNetwork",
@@ -618,7 +618,7 @@ func TestAssignSecurityContextErrorFieldPaths(t *testing.T) {
 			scc:  baseSCC(),
 			pod: func() *kapi.Pod {
 				p := basePod()
-				p.Spec.SecurityContext.HostPID = true
+				p.Spec.HostPID = true
 				return p
 			}(),
 			expectedFieldPath: "spec.hostPID",
@@ -628,7 +628,7 @@ func TestAssignSecurityContextErrorFieldPaths(t *testing.T) {
 			scc:  baseSCC(),
 			pod: func() *kapi.Pod {
 				p := basePod()
-				p.Spec.SecurityContext.HostIPC = true
+				p.Spec.HostIPC = true
 				return p
 			}(),
 			expectedFieldPath: "spec.hostIPC",
