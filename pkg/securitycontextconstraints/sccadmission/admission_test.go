@@ -56,7 +56,7 @@ func createNamespaceForTest() *corev1.Namespace {
 	}
 }
 
-func newTestAdmission(sccLister securityv1listers.SecurityContextConstraintsLister, nsLister corev1listers.NamespaceLister, authorizer authorizer.Authorizer) admission.Interface {
+func newTestAdmission(sccLister securityv1listers.SecurityContextConstraintsLister, nsLister corev1listers.NamespaceLister, authorizer authorizer.UnconditionalAuthorizer) admission.Interface {
 	return &constraint{
 		Handler:         admission.NewHandler(admission.Create),
 		namespaceLister: nsLister,
@@ -669,16 +669,16 @@ func TestAdmitFailure(t *testing.T) {
 	disallowedPriv.Spec.Containers[0].SecurityContext.Privileged = &priv
 
 	requestsHostNetwork := goodPod()
-	requestsHostNetwork.Spec.SecurityContext.HostNetwork = true
+	requestsHostNetwork.Spec.HostNetwork = true
 
 	requestsHostPorts := goodPod()
 	requestsHostPorts.Spec.Containers[0].Ports = []coreapi.ContainerPort{{HostPort: 1}}
 
 	requestsHostPID := goodPod()
-	requestsHostPID.Spec.SecurityContext.HostPID = true
+	requestsHostPID.Spec.HostPID = true
 
 	requestsHostIPC := goodPod()
-	requestsHostIPC.Spec.SecurityContext.HostIPC = true
+	requestsHostIPC.Spec.HostIPC = true
 
 	requestsSupplementalGroup := goodPod()
 	requestsSupplementalGroup.Spec.SecurityContext.SupplementalGroups = []int64{1}
