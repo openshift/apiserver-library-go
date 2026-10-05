@@ -2,13 +2,30 @@ package sccadmission
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/openshift/apiserver-library-go/pkg/securitycontextconstraints/sccmatching"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authentication/user"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	coreapi "k8s.io/kubernetes/pkg/apis/core"
 )
+
+// fakeNodeLister is a simple implementation for testing that returns empty node list
+type fakeNodeLister struct{}
+
+func (f *fakeNodeLister) List(selector labels.Selector) ([]*corev1.Node, error) {
+	return []*corev1.Node{}, nil
+}
+
+func (f *fakeNodeLister) Get(name string) (*corev1.Node, error) {
+	return nil, fmt.Errorf("node %s not found", name)
+}
+
+var _ corev1listers.NodeLister = &fakeNodeLister{}
 
 func TestSCCAuthorizationChecker(t *testing.T) {
 	userSCC := laxSCC()
@@ -95,9 +112,9 @@ func TestSCCAuthorizationChecker(t *testing.T) {
 			var provider sccmatching.SecurityContextConstraintsProvider
 			var err error
 			if test.scc == "user-scc" {
-				provider, err = sccmatching.NewSimpleProvider(userSCC)
+				provider, err = sccmatching.NewSimpleProvider(userSCC, getTestSysctls())
 			} else {
-				provider, err = sccmatching.NewSimpleProvider(saSCC)
+				provider, err = sccmatching.NewSimpleProvider(saSCC, getTestSysctls())
 			}
 			if err != nil {
 				t.Fatalf("Error creating provider: %v", err)
