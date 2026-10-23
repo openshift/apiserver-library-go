@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"reflect"
 	"strings"
 	"time"
@@ -43,7 +42,7 @@ func Register(plugins *admission.Plugins) {
 		func(input io.Reader) (admission.Interface, error) {
 			config := &imagepolicy.ImagePolicyConfig{}
 			if input != nil {
-				configContent, err := ioutil.ReadAll(input)
+				configContent, err := io.ReadAll(input)
 				if err != nil {
 					return nil, err
 				}

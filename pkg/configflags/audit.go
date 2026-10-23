@@ -1,7 +1,6 @@
 package configflags
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,7 +25,7 @@ func AuditFlags(c *configv1.AuditConfig, args map[string][]string) map[string][]
 		if err := os.MkdirAll(filepath.Dir(auditPolicyFilePath), 0755); err != nil {
 			utilruntime.HandleError(err)
 		}
-		if err := ioutil.WriteFile(auditPolicyFilePath, c.PolicyConfiguration.Raw, 0644); err != nil {
+		if err := os.WriteFile(auditPolicyFilePath, c.PolicyConfiguration.Raw, 0644); err != nil {
 			utilruntime.HandleError(err)
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -67,7 +67,7 @@ func TestDefaultPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := &imagepolicy.ImagePolicyConfig{}
-	configContent, err := ioutil.ReadAll(input)
+	configContent, err := io.ReadAll(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestAdmissionResolveImages(t *testing.T) {
 	}
 
 	defaultPolicyConfig := &imagepolicy.ImagePolicyConfig{}
-	configContent, err := ioutil.ReadAll(bytes.NewBufferString(`{"kind":"ImagePolicyConfig","apiVersion":"image.openshift.io/v1"}`))
+	configContent, err := io.ReadAll(bytes.NewBufferString(`{"kind":"ImagePolicyConfig","apiVersion":"image.openshift.io/v1"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
