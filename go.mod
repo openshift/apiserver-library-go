@@ -101,9 +101,9 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/apiextensions-apiserver v0.38.0-alpha.3 // indirect
 	k8s.io/component-base v0.38.0-alpha.3 // indirect
-	k8s.io/component-helpers v0.37.1 // indirect
+	k8s.io/component-helpers v0.38.0-alpha.3 // indirect
 	k8s.io/controller-manager v0.32.1 // indirect
-	k8s.io/dynamic-resource-allocation v0.37.1 // indirect
+	k8s.io/dynamic-resource-allocation v0.38.0-alpha.3 // indirect
 	k8s.io/gengo/v2 v2.0.0-20260408192533-25e2208e0dc3 // indirect
 	k8s.io/kube-openapi v0.0.0-20261014044854-ca3452a79603 // indirect
 	k8s.io/kube-scheduler v0.0.0 // indirect
