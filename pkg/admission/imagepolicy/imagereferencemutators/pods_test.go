@@ -144,6 +144,36 @@ func Test_podSpecMutator_Mutate(t *testing.T) {
 			},
 		},
 		{
+			name: "mutates only changed image volume references",
+			fields: fields{
+				spec: &kapi.PodSpec{
+					Volumes: []kapi.Volume{
+						{Name: "1", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test"}}},
+						{Name: "2", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test-2"}}},
+					},
+				},
+				oldSpec: &kapi.PodSpec{
+					Volumes: []kapi.Volume{
+						{Name: "1", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test-1"}}},
+						{Name: "2", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test-2"}}},
+					},
+				},
+			},
+			args: args{fn: func(ref *kapi.ObjectReference) error {
+				if ref.Name != "test" {
+					t.Errorf("did not expect to be called for existing reference")
+				}
+				ref.Name = "test-3"
+				return nil
+			}},
+			wantSpec: &kapi.PodSpec{
+				Volumes: []kapi.Volume{
+					{Name: "1", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test-3"}}},
+					{Name: "2", VolumeSource: kapi.VolumeSource{Image: &kapi.ImageVolumeSource{Reference: "test-2"}}},
+				},
+			},
+		},
+		{
 			name: "mutates works on update when it wasn't initially enabled",
 			fields: fields{
 				spec: &kapi.PodSpec{
@@ -320,6 +350,36 @@ func Test_podSpecV1Mutator_Mutate(t *testing.T) {
 				},
 				Containers: []kapiv1.Container{
 					{Name: "2", Image: "test-2"},
+				},
+			},
+		},
+		{
+			name: "mutates only changed image volume references",
+			fields: fields{
+				spec: &kapiv1.PodSpec{
+					Volumes: []kapiv1.Volume{
+						{Name: "1", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test"}}},
+						{Name: "2", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test-2"}}},
+					},
+				},
+				oldSpec: &kapiv1.PodSpec{
+					Volumes: []kapiv1.Volume{
+						{Name: "1", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test-1"}}},
+						{Name: "2", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test-2"}}},
+					},
+				},
+			},
+			args: args{fn: func(ref *kapi.ObjectReference) error {
+				if ref.Name != "test" {
+					t.Errorf("did not expect to be called for existing reference")
+				}
+				ref.Name = "test-3"
+				return nil
+			}},
+			wantSpec: &kapiv1.PodSpec{
+				Volumes: []kapiv1.Volume{
+					{Name: "1", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test-3"}}},
+					{Name: "2", VolumeSource: kapiv1.VolumeSource{Image: &kapiv1.ImageVolumeSource{Reference: "test-2"}}},
 				},
 			},
 		},
