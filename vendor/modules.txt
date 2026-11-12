@@ -1135,18 +1135,18 @@ k8s.io/component-base/tracing
 k8s.io/component-base/tracing/api/v1
 k8s.io/component-base/version
 k8s.io/component-base/zpages/features
-# k8s.io/component-helpers v0.37.1
-## explicit; go 1.26.0
+# k8s.io/component-helpers v0.38.0-alpha.3
+## explicit; go 1.27.0
 k8s.io/component-helpers/auth/rbac/validation
 k8s.io/component-helpers/resource
 k8s.io/component-helpers/scheduling/corev1
 k8s.io/component-helpers/scheduling/corev1/nodeaffinity
 k8s.io/component-helpers/storage/volume
-# k8s.io/controller-manager v0.32.1 => k8s.io/controller-manager v0.37.1
-## explicit; go 1.26.0
+# k8s.io/controller-manager v0.32.1 => k8s.io/controller-manager v0.38.0-alpha.3
+## explicit; go 1.27.0
 k8s.io/controller-manager/pkg/features
-# k8s.io/dynamic-resource-allocation v0.37.1
-## explicit; go 1.26.0
+# k8s.io/dynamic-resource-allocation v0.38.0-alpha.3
+## explicit; go 1.27.0
 k8s.io/dynamic-resource-allocation/deviceclass/extendedresourcecache
 # k8s.io/gengo/v2 v2.0.0-20260408192533-25e2208e0dc3
 ## explicit; go 1.24.0
@@ -1188,8 +1188,8 @@ k8s.io/kube-openapi/pkg/validation/errors
 k8s.io/kube-openapi/pkg/validation/spec
 k8s.io/kube-openapi/pkg/validation/strfmt
 k8s.io/kube-openapi/pkg/validation/strfmt/bson
-# k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.37.1
-## explicit; go 1.26.0
+# k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.38.0-alpha.3
+## explicit; go 1.27.0
 k8s.io/kube-scheduler/extender/v1
 # k8s.io/kubernetes v1.38.0-beta.0
 ## explicit; go 1.27.0
@@ -1261,8 +1261,8 @@ sigs.k8s.io/structured-merge-diff/v7/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
-# k8s.io/controller-manager => k8s.io/controller-manager v0.37.1
-# k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.37.1
+# k8s.io/controller-manager => k8s.io/controller-manager v0.38.0-alpha.3
+# k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.38.0-alpha.3
 # github.com/openshift/api => github.com/jacobsee/openshift-api v0.0.0-20261112195451-5fdfa11a3b3f
 # github.com/openshift/client-go => github.com/jacobsee/client-go v0.0.0-20261112195824-941f34779958
 # github.com/openshift/library-go => github.com/jacobsee/library-go v0.0.0-20261112195933-e390a0c40f10
