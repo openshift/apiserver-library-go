@@ -22,8 +22,8 @@ require (
 // k8s.io/kubernetes is not meant to be imported and bring in dependencies at v0.0.0,
 // which fail to resolve, so resolution failures need to be addressed explicitly here.
 replace (
-	k8s.io/controller-manager => k8s.io/controller-manager v0.37.1
-	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.37.1
+	k8s.io/controller-manager => k8s.io/controller-manager v0.38.0-alpha.3
+	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.38.0-alpha.3
 )
 
 require (
